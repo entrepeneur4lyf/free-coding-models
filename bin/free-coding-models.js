@@ -100,13 +100,33 @@ import { loadConfig, saveConfig, getApiKey, resolveApiKeys, isProviderEnabled, s
 import { buildMergedModels } from '../lib/model-merger.js'
 import { ProxyServer } from '../lib/proxy-server.js'
 import { loadOpenCodeConfig, saveOpenCodeConfig, syncToOpenCode, restoreOpenCodeBackup } from '../lib/opencode-sync.js'
-import { loadUsageMap } from '../lib/usage-reader.js'
+import { loadUsageSnapshot } from '../lib/usage-reader.js'
 import { loadRecentLogs } from '../lib/log-reader.js'
+import { parseOpenRouterResponse, fetchProviderQuota as _fetchProviderQuotaFromModule } from '../lib/provider-quota-fetchers.js'
 
 // 📖 mergedModels: cross-provider grouped model list (one entry per label, N providers each)
 // 📖 mergedModelByLabel: fast lookup map from display label → merged model entry
 const mergedModels = buildMergedModels(MODELS)
 const mergedModelByLabel = new Map(mergedModels.map(m => [m.label, m]))
+
+// 📖 Providers where quota telemetry is not publicly exposed in API responses/endpoints.
+// 📖 For these providers, Usage shows N/A unless we obtain a real quota from a live header.
+const PROVIDERS_WITHOUT_QUOTA_TELEMETRY = new Set([
+  'nvidia',
+  'deepinfra',
+  'hyperbolic',
+  'scaleway',
+  'cloudflare',
+  'perplexity',
+  'googleai',
+  'replicate',
+  'codestral',
+  'qwen',
+  'zai',
+  'iflow',
+])
+
+// 📖 Provider quota cache is managed by lib/provider-quota-fetchers.js (TTL + backoff).
 
 const require = createRequire(import.meta.url)
 const readline = require('readline')
@@ -1261,7 +1281,7 @@ function renderTable(results, pendingPings, frame, cursor = null, sortColumn = '
         usageCell = chalk.red(usageStr.padEnd(W_USAGE))
       }
     } else {
-      usageCell = chalk.dim('--'.padEnd(W_USAGE))
+      usageCell = chalk.dim(usagePlaceholderForProvider(r.providerKey).padEnd(W_USAGE))
     }
 
     // 📖 Build row with double space between columns (order: Rank, Tier, SWE%, CTX, Model, Origin, Latest Ping, Avg Ping, Health, Verdict, Stability, Up%, Usage)
@@ -1403,16 +1423,73 @@ async function ping(apiKey, modelId, providerKey, url) {
     })
     // 📖 Normalize all HTTP 2xx statuses to "200" so existing verdict/avg logic still works.
     const code = resp.status >= 200 && resp.status < 300 ? '200' : String(resp.status)
-    return { code, ms: Math.round(performance.now() - t0) }
+    return {
+      code,
+      ms: Math.round(performance.now() - t0),
+      quotaPercent: extractQuotaPercent(resp.headers),
+    }
   } catch (err) {
     const isTimeout = err.name === 'AbortError'
     return {
       code: isTimeout ? '000' : 'ERR',
-      ms: isTimeout ? 'TIMEOUT' : Math.round(performance.now() - t0)
+      ms: isTimeout ? 'TIMEOUT' : Math.round(performance.now() - t0),
+      quotaPercent: null,
     }
   } finally {
     clearTimeout(timer)
   }
+}
+
+function getHeaderValue(headers, key) {
+  if (!headers) return null
+  if (typeof headers.get === 'function') return headers.get(key)
+  return headers[key] ?? headers[key.toLowerCase()] ?? null
+}
+
+function extractQuotaPercent(headers) {
+  const variants = [
+    ['x-ratelimit-remaining', 'x-ratelimit-limit'],
+    ['x-ratelimit-remaining-requests', 'x-ratelimit-limit-requests'],
+    ['ratelimit-remaining', 'ratelimit-limit'],
+    ['ratelimit-remaining-requests', 'ratelimit-limit-requests'],
+  ]
+
+  for (const [remainingKey, limitKey] of variants) {
+    const remainingRaw = getHeaderValue(headers, remainingKey)
+    const limitRaw = getHeaderValue(headers, limitKey)
+    const remaining = parseFloat(remainingRaw)
+    const limit = parseFloat(limitRaw)
+    if (Number.isFinite(remaining) && Number.isFinite(limit) && limit > 0) {
+      const pct = Math.round((remaining / limit) * 100)
+      return Math.max(0, Math.min(100, pct))
+    }
+  }
+
+  return null
+}
+
+// ─── Provider endpoint quota polling ─────────────────────────────────────────
+// 📖 Moved to lib/provider-quota-fetchers.js for modularity + SiliconFlow support.
+// 📖 parseOpenRouterResponse re-exported here for extractQuotaPercent usage.
+
+async function fetchOpenRouterQuotaPercent(apiKey) {
+  // Delegate to module; uses module-level cache + error backoff
+  return _fetchProviderQuotaFromModule('openrouter', apiKey)
+}
+
+async function fetchProviderQuotaPercent(providerKey, apiKey) {
+  // Delegate to unified module entrypoint (handles openrouter + siliconflow)
+  return _fetchProviderQuotaFromModule(providerKey, apiKey)
+}
+
+async function getProviderQuotaPercentCached(providerKey, apiKey) {
+  // The module already implements TTL cache and error backoff internally.
+  // This wrapper preserves the existing call-site API.
+  return fetchProviderQuotaPercent(providerKey, apiKey)
+}
+
+function usagePlaceholderForProvider(providerKey) {
+  return PROVIDERS_WITHOUT_QUOTA_TELEMETRY.has(providerKey) ? 'N/A' : '--'
 }
 
 // ─── OpenCode integration ──────────────────────────────────────────────────────
@@ -2892,9 +2969,9 @@ async function main() {
 
   // 📖 Load usage data from token-stats.json and attach usagePercent to each result row.
   // 📖 usagePercent is the quota percent remaining (0–100). undefined = no data available.
-  const usageMap = loadUsageMap()
+  const usageSnapshot = loadUsageSnapshot()
   for (const r of results) {
-    const pct = usageMap[r.modelId]
+    const pct = usageSnapshot.byModel[r.modelId] ?? usageSnapshot.byProvider[r.providerKey]
     r.usagePercent = typeof pct === 'number' ? pct : undefined
   }
 
@@ -2928,7 +3005,7 @@ async function main() {
   // 📖 Add interactive selection state - cursor index and user's choice
   // 📖 sortColumn: 'rank'|'tier'|'origin'|'model'|'ping'|'avg'|'status'|'verdict'|'uptime'
   // 📖 sortDirection: 'asc' (default) or 'desc'
-  // 📖 pingInterval: current interval in ms (default 2000, adjustable with W/X keys)
+    // 📖 pingInterval: current interval in ms (default 2000, adjustable with W/= keys)
   // 📖 tierFilter: current tier filter letter (null = all, 'S' = S+/S, 'A' = A+/A/A-, etc.)
   const state = {
     results,
@@ -2938,7 +3015,7 @@ async function main() {
     selectedModel: null,
     sortColumn: 'avg',
     sortDirection: 'asc',
-    pingInterval: PING_INTERVAL,  // 📖 Track current interval for W/X keys
+    pingInterval: PING_INTERVAL,  // 📖 Track current interval for W/= keys
     lastPingTime: Date.now(),     // 📖 Track when last ping cycle started
     mode,                         // 📖 'opencode' or 'openclaw' — controls Enter action
     scrollOffset: 0,              // 📖 First visible model index in viewport
@@ -3317,7 +3394,8 @@ async function main() {
       lines.push(chalk.dim('  when requests are proxied through the multi-account rotation proxy.'))
     } else {
       // 📖 Column widths for the log table
-      const W_TIME    = 22
+      const W_TIME    = 19
+      const W_TYPE    = 18
       const W_PROV    = 14
       const W_MODEL   = 36
       const W_STATUS  = 8
@@ -3326,20 +3404,21 @@ async function main() {
 
       // 📖 Header row
       const hTime   = chalk.dim('Time'.padEnd(W_TIME))
+      const hType   = chalk.dim('Type'.padEnd(W_TYPE))
       const hProv   = chalk.dim('Provider'.padEnd(W_PROV))
       const hModel  = chalk.dim('Model'.padEnd(W_MODEL))
       const hStatus = chalk.dim('Status'.padEnd(W_STATUS))
       const hTok    = chalk.dim('Tokens'.padEnd(W_TOKENS))
       const hLat    = chalk.dim('Latency'.padEnd(W_LAT))
-      lines.push(`  ${hTime}  ${hProv}  ${hModel}  ${hStatus}  ${hTok}  ${hLat}`)
-      lines.push(chalk.dim('  ' + '─'.repeat(W_TIME + W_PROV + W_MODEL + W_STATUS + W_TOKENS + W_LAT + 10)))
+      lines.push(`  ${hTime}  ${hType}  ${hProv}  ${hModel}  ${hStatus}  ${hTok}  ${hLat}`)
+      lines.push(chalk.dim('  ' + '─'.repeat(W_TIME + W_TYPE + W_PROV + W_MODEL + W_STATUS + W_TOKENS + W_LAT + 12)))
 
       for (const row of logRows) {
         // 📖 Format time as HH:MM:SS (strip the date part for compactness)
         let timeStr = row.time
         try {
           const d = new Date(row.time)
-          if (!isNaN(d)) {
+          if (!Number.isNaN(d.getTime())) {
             timeStr = d.toISOString().replace('T', ' ').slice(0, 19)
           }
         } catch { /* keep raw */ }
@@ -3361,12 +3440,13 @@ async function main() {
         const latStr = row.latency > 0 ? `${row.latency}ms` : '--'
 
         const timeCell  = chalk.dim(timeStr.slice(0, W_TIME).padEnd(W_TIME))
+        const typeCell  = chalk.magenta((row.requestType || '--').slice(0, W_TYPE).padEnd(W_TYPE))
         const provCell  = chalk.cyan(row.provider.slice(0, W_PROV).padEnd(W_PROV))
         const modelCell = chalk.white(row.model.slice(0, W_MODEL).padEnd(W_MODEL))
         const tokCell   = chalk.dim(tokStr.padEnd(W_TOKENS))
         const latCell   = chalk.dim(latStr.padEnd(W_LAT))
 
-        lines.push(`  ${timeCell}  ${provCell}  ${modelCell}  ${statusCell}  ${tokCell}  ${latCell}`)
+        lines.push(`  ${timeCell}  ${typeCell}  ${provCell}  ${modelCell}  ${statusCell}  ${tokCell}  ${latCell}`)
       }
     }
 
@@ -4825,7 +4905,14 @@ async function main() {
   const pingModel = async (r) => {
     const providerApiKey = getApiKey(state.config, r.providerKey) ?? null
     const providerUrl = sources[r.providerKey]?.url ?? sources.nvidia.url
-    const { code, ms } = await ping(providerApiKey, r.modelId, r.providerKey, providerUrl)
+    let { code, ms, quotaPercent } = await ping(providerApiKey, r.modelId, r.providerKey, providerUrl)
+
+    if ((quotaPercent === null || quotaPercent === undefined) && providerApiKey) {
+      const providerQuota = await getProviderQuotaPercentCached(r.providerKey, providerApiKey)
+      if (typeof providerQuota === 'number' && Number.isFinite(providerQuota)) {
+        quotaPercent = providerQuota
+      }
+    }
 
     // 📖 Store ping result as object with ms and code
     // 📖 ms = actual response time (even for errors like 429)
@@ -4846,15 +4933,34 @@ async function main() {
       r.status = 'down'
       r.httpCode = code
     }
+
+    if (typeof quotaPercent === 'number' && Number.isFinite(quotaPercent)) {
+      r.usagePercent = quotaPercent
+      // Provider-level fallback: apply latest known quota to sibling rows on same provider.
+      for (const sibling of state.results) {
+        if (sibling.providerKey === r.providerKey && (sibling.usagePercent === undefined || sibling.usagePercent === null)) {
+          sibling.usagePercent = quotaPercent
+        }
+      }
+    }
   }
 
   // 📖 Initial ping of all models
   const initialPing = Promise.all(state.results.map(r => pingModel(r)))
 
-  // 📖 Continuous ping loop with dynamic interval (adjustable with W/X keys)
+  // 📖 Continuous ping loop with dynamic interval (adjustable with W/= keys)
   const schedulePing = () => {
     state.pingIntervalObj = setTimeout(async () => {
       state.lastPingTime = Date.now()
+
+      // 📖 Refresh persisted usage snapshots each cycle so proxy writes appear live in table.
+      const liveUsageSnapshot = loadUsageSnapshot()
+      for (const r of state.results) {
+        const pct = liveUsageSnapshot.byModel[r.modelId] ?? liveUsageSnapshot.byProvider[r.providerKey]
+        if (typeof pct === 'number' && Number.isFinite(pct)) {
+          r.usagePercent = pct
+        }
+      }
 
       state.results.forEach(r => {
         pingModel(r).catch(() => {
@@ -4875,7 +4981,7 @@ async function main() {
 
   // 📖 Keep interface running forever - user can select anytime or Ctrl+C to exit
   // 📖 The pings continue running in background with dynamic interval
-  // 📖 User can press W to decrease interval (faster pings) or X to increase (slower)
+  // 📖 User can press W to decrease interval (faster pings) or = to increase (slower)
   // 📖 Current interval shown in header: "next ping Xs"
 }
 
