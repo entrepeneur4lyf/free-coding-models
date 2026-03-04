@@ -95,8 +95,23 @@ import { createServer as createHttpServer } from 'http'
 import { request as httpsRequest } from 'https'
 import { MODELS, sources } from '../sources.js'
 import { patchOpenClawModelsJson } from '../patch-openclaw-models.js'
-import { getAvg, getVerdict, getUptime, getP95, getJitter, getStabilityScore, sortResults, filterByTier, findBestModel, parseArgs, TIER_ORDER, VERDICT_ORDER, TIER_LETTER_MAP, scoreModelForTask, getTopRecommendations, TASK_TYPES, PRIORITY_TYPES, CONTEXT_BUDGETS, formatCtxWindow, labelFromId } from '../lib/utils.js'
-import { loadConfig, saveConfig, getApiKey, isProviderEnabled, saveAsProfile, loadProfile, listProfiles, deleteProfile, getActiveProfileName, setActiveProfile, _emptyProfileSettings } from '../lib/config.js'
+import { getAvg, getVerdict, getUptime, getP95, getJitter, getStabilityScore, sortResults, filterByTier, findBestModel, parseArgs, TIER_ORDER, VERDICT_ORDER, TIER_LETTER_MAP, scoreModelForTask, getTopRecommendations, TASK_TYPES, PRIORITY_TYPES, CONTEXT_BUDGETS, formatCtxWindow, labelFromId, getProxyStatusInfo } from '../lib/utils.js'
+import { loadConfig, saveConfig, getApiKey, resolveApiKeys, addApiKey, removeApiKey, isProviderEnabled, saveAsProfile, loadProfile, listProfiles, deleteProfile, getActiveProfileName, setActiveProfile, _emptyProfileSettings } from '../lib/config.js'
+import { buildMergedModels } from '../lib/model-merger.js'
+import { ProxyServer } from '../lib/proxy-server.js'
+import { loadOpenCodeConfig, saveOpenCodeConfig, syncToOpenCode, restoreOpenCodeBackup } from '../lib/opencode-sync.js'
+import { usageForRow as _usageForRow } from '../lib/usage-reader.js'
+import { loadRecentLogs } from '../lib/log-reader.js'
+import { parseOpenRouterResponse, fetchProviderQuota as _fetchProviderQuotaFromModule } from '../lib/provider-quota-fetchers.js'
+import { isKnownQuotaTelemetry } from '../lib/quota-capabilities.js'
+
+// 📖 mergedModels: cross-provider grouped model list (one entry per label, N providers each)
+// 📖 mergedModelByLabel: fast lookup map from display label → merged model entry
+const mergedModels = buildMergedModels(MODELS)
+const mergedModelByLabel = new Map(mergedModels.map(m => [m.label, m]))
+
+// 📖 Provider quota cache is managed by lib/provider-quota-fetchers.js (TTL + backoff).
+// 📖 Usage placeholder logic uses isKnownQuotaTelemetry() from lib/quota-capabilities.js.
 
 const require = createRequire(import.meta.url)
 const readline = require('readline')
@@ -242,8 +257,10 @@ function ensureTelemetryConfig(config) {
   if (!config.telemetry || typeof config.telemetry !== 'object') {
     config.telemetry = { enabled: true, anonymousId: null }
   }
-  // 📖 Always force telemetry to true, overriding any previous user choice
-  config.telemetry.enabled = true
+  // 📖 Only default enabled when unset; do not override a user's explicit opt-out
+  if (typeof config.telemetry.enabled !== 'boolean') {
+    config.telemetry.enabled = true
+  }
   if (typeof config.telemetry.anonymousId !== 'string' || !config.telemetry.anonymousId.trim()) {
     config.telemetry.anonymousId = null
   }
@@ -472,7 +489,7 @@ function runUpdate(latestVersion) {
     
     // 📖 Relaunch automatically with the same arguments
     const args = process.argv.slice(2)
-    execSync(`node bin/free-coding-models.js ${args.join(' ')}`, { stdio: 'inherit' })
+    execSync(`node ${process.argv[1]} ${args.join(' ')}`, { stdio: 'inherit' })
     process.exit(0)
   } catch (err) {
     console.log()
@@ -495,7 +512,7 @@ function runUpdate(latestVersion) {
         
         // 📖 Relaunch automatically with the same arguments
         const args = process.argv.slice(2)
-        execSync(`node bin/free-coding-models.js ${args.join(' ')}`, { stdio: 'inherit' })
+        execSync(`node ${process.argv[1]} ${args.join(' ')}`, { stdio: 'inherit' })
         process.exit(0)
       } catch (sudoErr) {
         console.log()
@@ -728,11 +745,19 @@ const spinCell = (f, o = 0) => chalk.dim.yellow(FRAMES[(f + o) % FRAMES.length].
 const SETTINGS_OVERLAY_BG = chalk.bgRgb(14, 20, 30)
 const HELP_OVERLAY_BG = chalk.bgRgb(24, 16, 32)
 const RECOMMEND_OVERLAY_BG = chalk.bgRgb(10, 25, 15)  // 📖 Green tint for Smart Recommend
+const LOG_OVERLAY_BG = chalk.bgRgb(10, 20, 26)        // 📖 Dark blue-green tint for Log page
 const OVERLAY_PANEL_WIDTH = 116
 
 // 📖 Strip ANSI color/control sequences to estimate visible text width before padding.
 function stripAnsi(input) {
   return String(input).replace(/\x1b\[[0-9;]*m/g, '').replace(/\x1b\][^\x1b]*\x1b\\/g, '')
+}
+
+// 📖 maskApiKey: Mask all but first 4 and last 3 characters of an API key.
+// 📖 Prevents accidental disclosure of secrets in TUI display.
+function maskApiKey(key) {
+  if (!key || key.length < 10) return '***'
+  return key.slice(0, 4) + '***' + key.slice(-3)
 }
 
 // 📖 Calculate display width of a string in terminal columns.
@@ -858,8 +883,29 @@ function sortResultsWithPinnedFavorites(results, sortColumn, sortDirection) {
   return [...bothRows, ...recommendedRows, ...favoriteRows, ...nonSpecialRows]
 }
 
+// 📖 renderProxyStatusLine: Maps proxyStartupStatus + active proxy into a chalk-coloured footer line.
+// 📖 Always returns a non-empty string (no hidden states) so the footer row is always present.
+// 📖 Delegates state classification to the pure getProxyStatusInfo helper (testable in utils.js).
+function renderProxyStatusLine(proxyStartupStatus, proxyInstance) {
+  const info = getProxyStatusInfo(proxyStartupStatus, !!proxyInstance)
+  switch (info.state) {
+    case 'starting':
+      return chalk.dim('  ') + chalk.yellow('⟳ Proxy') + chalk.dim(' starting…')
+    case 'running': {
+      const portPart  = info.port        ? chalk.dim(` :${info.port}`) : ''
+      const acctPart  = info.accountCount != null ? chalk.dim(` · ${info.accountCount} account${info.accountCount === 1 ? '' : 's'}`) : ''
+      return chalk.dim('  ') + chalk.rgb(57, 255, 20)('🔀 Proxy') + chalk.rgb(57, 255, 20)(' running') + portPart + acctPart
+    }
+    case 'failed':
+      return chalk.dim('  ') + chalk.red('✗ Proxy failed') + chalk.dim(` — ${info.reason}`)
+    default:
+      // stopped / not configured — dim but always present
+      return chalk.dim('  🔀 Proxy not configured')
+  }
+}
+
 // 📖 renderTable: mode param controls footer hint text (opencode vs openclaw)
-function renderTable(results, pendingPings, frame, cursor = null, sortColumn = 'avg', sortDirection = 'asc', pingInterval = PING_INTERVAL, lastPingTime = Date.now(), mode = 'opencode', tierFilterMode = 0, scrollOffset = 0, terminalRows = 0, originFilterMode = 0, activeProfile = null, profileSaveMode = false, profileSaveBuffer = '') {
+function renderTable(results, pendingPings, frame, cursor = null, sortColumn = 'avg', sortDirection = 'asc', pingInterval = PING_INTERVAL, lastPingTime = Date.now(), mode = 'opencode', tierFilterMode = 0, scrollOffset = 0, terminalRows = 0, originFilterMode = 0, activeProfile = null, profileSaveMode = false, profileSaveBuffer = '', proxyStartupStatus = null) {
   // 📖 Filter out hidden models for display
   const visibleResults = results.filter(r => !r.hidden)
 
@@ -930,6 +976,7 @@ function renderTable(results, pendingPings, frame, cursor = null, sortColumn = '
   const W_VERDICT = 14
   const W_STAB = 11
   const W_UPTIME = 6
+  const W_USAGE = 7
 
   // 📖 Sort models using the shared helper
   const sorted = sortResultsWithPinnedFavorites(visibleResults, sortColumn, sortDirection)
@@ -960,6 +1007,7 @@ function renderTable(results, pendingPings, frame, cursor = null, sortColumn = '
   const verdictH = sortColumn === 'verdict' ? dir + ' Verdict' : 'Verdict'
   const stabH    = sortColumn === 'stability' ? dir + ' Stability' : 'Stability'
   const uptimeH  = sortColumn === 'uptime' ? dir + ' Up%' : 'Up%'
+  const usageH   = sortColumn === 'usage' ? dir + ' Usage' : 'Usage'
 
   // 📖 Helper to colorize first letter for keyboard shortcuts
   // 📖 IMPORTANT: Pad PLAIN TEXT first, then apply colors to avoid alignment issues
@@ -996,9 +1044,15 @@ function renderTable(results, pendingPings, frame, cursor = null, sortColumn = '
     return chalk.dim('Sta') + chalk.white.bold('B') + chalk.dim('ility' + padding)
   })()
   const uptimeH_c  = sortColumn === 'uptime' ? chalk.bold.cyan(uptimeH.padEnd(W_UPTIME)) : colorFirst(uptimeH, W_UPTIME, chalk.green)
+  // 📖 Custom colorization for Usage: highlight 'G' (Shift+G = sort key)
+  const usageH_c   = sortColumn === 'usage' ? chalk.bold.cyan(usageH.padEnd(W_USAGE)) : (() => {
+    const plain = 'Usage'
+    const padding = ' '.repeat(Math.max(0, W_USAGE - plain.length))
+    return chalk.dim('Usa') + chalk.yellow.bold('G') + chalk.dim('e' + padding)
+  })()
 
-  // 📖 Header with proper spacing (column order: Rank, Tier, SWE%, CTX, Model, Origin, Latest Ping, Avg Ping, Health, Verdict, Stability, Up%)
-  lines.push('  ' + rankH_c + '  ' + tierH_c + '  ' + sweH_c + '  ' + ctxH_c + '  ' + modelH_c + '  ' + originH_c + '  ' + pingH_c + '  ' + avgH_c + '  ' + healthH_c + '  ' + verdictH_c + '  ' + stabH_c + '  ' + uptimeH_c)
+  // 📖 Header with proper spacing (column order: Rank, Tier, SWE%, CTX, Model, Origin, Latest Ping, Avg Ping, Health, Verdict, Stability, Up%, Usage)
+  lines.push('  ' + rankH_c + '  ' + tierH_c + '  ' + sweH_c + '  ' + ctxH_c + '  ' + modelH_c + '  ' + originH_c + '  ' + pingH_c + '  ' + avgH_c + '  ' + healthH_c + '  ' + verdictH_c + '  ' + stabH_c + '  ' + uptimeH_c + '  ' + usageH_c)
 
   // 📖 Separator line
   lines.push(
@@ -1014,7 +1068,8 @@ function renderTable(results, pendingPings, frame, cursor = null, sortColumn = '
     chalk.dim('─'.repeat(W_STATUS)) + '  ' +
     chalk.dim('─'.repeat(W_VERDICT)) + '  ' +
     chalk.dim('─'.repeat(W_STAB)) + '  ' +
-    chalk.dim('─'.repeat(W_UPTIME))
+    chalk.dim('─'.repeat(W_UPTIME)) + '  ' +
+    chalk.dim('─'.repeat(W_USAGE))
   )
 
   // 📖 Viewport clipping: only render models that fit on screen
@@ -1033,7 +1088,7 @@ function renderTable(results, pendingPings, frame, cursor = null, sortColumn = '
     // 📖 Left-aligned columns - pad plain text first, then colorize
     const num = chalk.dim(String(r.idx).padEnd(W_RANK))
     const tier = tierFn(r.tier.padEnd(W_TIER))
-    // 📖 Show provider name from sources map (NIM / Groq / Cerebras)
+    // 📖 Keep terminal view provider-specific so each row is monitorable per provider
     const providerName = sources[r.providerKey]?.name ?? r.providerKey ?? 'NIM'
     const source = chalk.green(providerName.padEnd(W_SOURCE))
     // 📖 Favorites: always reserve 2 display columns at the start of Model column.
@@ -1217,10 +1272,28 @@ function renderTable(results, pendingPings, frame, cursor = null, sortColumn = '
 
     // 📖 When cursor is on this row, render Model and Origin in bright white for readability
     const nameCell = isCursor ? chalk.white.bold(favoritePrefix + r.label.slice(0, nameWidth).padEnd(nameWidth)) : name
-    const sourceCell = isCursor ? chalk.white.bold(providerName.padEnd(W_SOURCE)) : source
+    const sourceCursorText = providerName.padEnd(W_SOURCE)
+    const sourceCell = isCursor ? chalk.white.bold(sourceCursorText) : source
 
-    // 📖 Build row with double space between columns (order: Rank, Tier, SWE%, CTX, Model, Origin, Latest Ping, Avg Ping, Health, Verdict, Stability, Up%)
-    const row = '  ' + num + '  ' + tier + '  ' + sweCell + '  ' + ctxCell + '  ' + nameCell + '  ' + sourceCell + '  ' + pingCell + '  ' + avgCell + '  ' + status + '  ' + speedCell + '  ' + stabCell + '  ' + uptimeCell
+    // 📖 Usage column — quota percent remaining from token-stats.json (higher = more quota left)
+    let usageCell
+    if (r.usagePercent !== undefined && r.usagePercent !== null) {
+      const usageStr = Math.round(r.usagePercent) + '%'
+      if (r.usagePercent >= 80) {
+        usageCell = chalk.greenBright(usageStr.padEnd(W_USAGE))
+      } else if (r.usagePercent >= 50) {
+        usageCell = chalk.yellow(usageStr.padEnd(W_USAGE))
+      } else if (r.usagePercent >= 20) {
+        usageCell = chalk.rgb(255, 165, 0)(usageStr.padEnd(W_USAGE)) // orange
+      } else {
+        usageCell = chalk.red(usageStr.padEnd(W_USAGE))
+      }
+    } else {
+      usageCell = chalk.dim(usagePlaceholderForProvider(r.providerKey).padEnd(W_USAGE))
+    }
+
+    // 📖 Build row with double space between columns (order: Rank, Tier, SWE%, CTX, Model, Origin, Latest Ping, Avg Ping, Health, Verdict, Stability, Up%, Usage)
+    const row = '  ' + num + '  ' + tier + '  ' + sweCell + '  ' + ctxCell + '  ' + nameCell + '  ' + sourceCell + '  ' + pingCell + '  ' + avgCell + '  ' + status + '  ' + speedCell + '  ' + stabCell + '  ' + uptimeCell + '  ' + usageCell
 
     if (isCursor) {
       lines.push(chalk.bgRgb(50, 0, 60)(row))
@@ -1253,10 +1326,11 @@ function renderTable(results, pendingPings, frame, cursor = null, sortColumn = '
       ? chalk.rgb(0, 200, 255)('Enter→OpenDesktop')
       : chalk.rgb(0, 200, 255)('Enter→OpenCode')
   // 📖 Line 1: core navigation + sorting shortcuts
-  lines.push(chalk.dim(`  ↑↓ Navigate  •  `) + actionHint + chalk.dim(`  •  `) + chalk.yellow('F') + chalk.dim(` Favorite  •  R/Y/O/M/L/A/S/C/H/V/B/U Sort  •  `) + chalk.yellow('T') + chalk.dim(` Tier  •  `) + chalk.yellow('N') + chalk.dim(` Origin  •  W↓/X↑ (${intervalSec}s)  •  `) + chalk.rgb(255, 100, 50).bold('Z') + chalk.dim(` Mode  •  `) + chalk.yellow('P') + chalk.dim(` Settings  •  `) + chalk.rgb(0, 255, 80).bold('K') + chalk.dim(` Help`))
+  lines.push(chalk.dim(`  ↑↓ Navigate  •  `) + actionHint + chalk.dim(`  •  `) + chalk.yellow('F') + chalk.dim(` Favorite  •  R/Y/O/M/L/A/S/C/H/V/B/U/`) + chalk.yellow('G') + chalk.dim(` Sort  •  `) + chalk.yellow('T') + chalk.dim(` Tier  •  `) + chalk.yellow('N') + chalk.dim(` Origin  •  W↓/=↑ (${intervalSec}s)  •  `) + chalk.rgb(255, 100, 50).bold('Z') + chalk.dim(` Mode  •  `) + chalk.yellow('X') + chalk.dim(` Logs  •  `) + chalk.yellow('P') + chalk.dim(` Settings  •  `) + chalk.rgb(0, 255, 80).bold('K') + chalk.dim(` Help`))
   // 📖 Line 2: profiles, recommend, feature request, bug report, and extended hints — gives visibility to less-obvious features
   lines.push(chalk.dim(`  `) + chalk.rgb(200, 150, 255).bold('⇧P') + chalk.dim(` Cycle profile  •  `) + chalk.rgb(200, 150, 255).bold('⇧S') + chalk.dim(` Save profile  •  `) + chalk.rgb(0, 200, 180).bold('Q') + chalk.dim(` Smart Recommend  •  `) + chalk.rgb(57, 255, 20).bold('J') + chalk.dim(` Request feature  •  `) + chalk.rgb(255, 87, 51).bold('I') + chalk.dim(` Report bug  •  `) + chalk.yellow('E') + chalk.dim(`/`) + chalk.yellow('D') + chalk.dim(` Tier ↑↓  •  `) + chalk.yellow('Esc') + chalk.dim(` Close overlay  •  Ctrl+C Exit`))
-  lines.push('')
+  // 📖 Proxy status line — always rendered with explicit state (starting/running/failed/stopped)
+  lines.push(renderProxyStatusLine(proxyStartupStatus, activeProxy))
   lines.push(
     chalk.rgb(255, 150, 200)('  Made with 💖 & ☕ by \x1b]8;;https://github.com/vava-nessa\x1b\\vava-nessa\x1b]8;;\x1b\\') +
     chalk.dim('  •  ') +
@@ -1353,16 +1427,75 @@ async function ping(apiKey, modelId, providerKey, url) {
     })
     // 📖 Normalize all HTTP 2xx statuses to "200" so existing verdict/avg logic still works.
     const code = resp.status >= 200 && resp.status < 300 ? '200' : String(resp.status)
-    return { code, ms: Math.round(performance.now() - t0) }
+    return {
+      code,
+      ms: Math.round(performance.now() - t0),
+      quotaPercent: extractQuotaPercent(resp.headers),
+    }
   } catch (err) {
     const isTimeout = err.name === 'AbortError'
     return {
       code: isTimeout ? '000' : 'ERR',
-      ms: isTimeout ? 'TIMEOUT' : Math.round(performance.now() - t0)
+      ms: isTimeout ? 'TIMEOUT' : Math.round(performance.now() - t0),
+      quotaPercent: null,
     }
   } finally {
     clearTimeout(timer)
   }
+}
+
+function getHeaderValue(headers, key) {
+  if (!headers) return null
+  if (typeof headers.get === 'function') return headers.get(key)
+  return headers[key] ?? headers[key.toLowerCase()] ?? null
+}
+
+function extractQuotaPercent(headers) {
+  const variants = [
+    ['x-ratelimit-remaining', 'x-ratelimit-limit'],
+    ['x-ratelimit-remaining-requests', 'x-ratelimit-limit-requests'],
+    ['ratelimit-remaining', 'ratelimit-limit'],
+    ['ratelimit-remaining-requests', 'ratelimit-limit-requests'],
+  ]
+
+  for (const [remainingKey, limitKey] of variants) {
+    const remainingRaw = getHeaderValue(headers, remainingKey)
+    const limitRaw = getHeaderValue(headers, limitKey)
+    const remaining = parseFloat(remainingRaw)
+    const limit = parseFloat(limitRaw)
+    if (Number.isFinite(remaining) && Number.isFinite(limit) && limit > 0) {
+      const pct = Math.round((remaining / limit) * 100)
+      return Math.max(0, Math.min(100, pct))
+    }
+  }
+
+  return null
+}
+
+// ─── Provider endpoint quota polling ─────────────────────────────────────────
+// 📖 Moved to lib/provider-quota-fetchers.js for modularity + SiliconFlow support.
+// 📖 parseOpenRouterResponse re-exported here for extractQuotaPercent usage.
+
+async function fetchOpenRouterQuotaPercent(apiKey) {
+  // Delegate to module; uses module-level cache + error backoff
+  return _fetchProviderQuotaFromModule('openrouter', apiKey)
+}
+
+async function fetchProviderQuotaPercent(providerKey, apiKey) {
+  // Delegate to unified module entrypoint (handles openrouter + siliconflow)
+  return _fetchProviderQuotaFromModule(providerKey, apiKey)
+}
+
+async function getProviderQuotaPercentCached(providerKey, apiKey) {
+  // The module already implements TTL cache and error backoff internally.
+  // This wrapper preserves the existing call-site API.
+  return fetchProviderQuotaPercent(providerKey, apiKey)
+}
+
+function usagePlaceholderForProvider(providerKey) {
+  // 📖 'N/A' for providers with no reliable quota signal (unknown telemetry type),
+  // 📖 '--' for providers that expose quota via headers or a dedicated endpoint.
+  return isKnownQuotaTelemetry(providerKey) ? '--' : 'N/A'
 }
 
 // ─── OpenCode integration ──────────────────────────────────────────────────────
@@ -1604,25 +1737,6 @@ async function resolveOpenCodeTmuxPort() {
 
 function getOpenCodeConfigPath() {
   return OPENCODE_CONFIG
-}
-
-function loadOpenCodeConfig() {
-  const configPath = getOpenCodeConfigPath()
-  if (!existsSync(configPath)) return { provider: {} }
-  try {
-    return JSON.parse(readFileSync(configPath, 'utf8'))
-  } catch {
-    return { provider: {} }
-  }
-}
-
-function saveOpenCodeConfig(config) {
-  const configPath = getOpenCodeConfigPath()
-  const dir = dirname(configPath)
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true })
-  }
-  writeFileSync(configPath, JSON.stringify(config, null, 2))
 }
 
 // ─── Shared OpenCode spawn helper ──────────────────────────────────────────────
@@ -2096,6 +2210,223 @@ async function startOpenCode(model, fcmConfig) {
     console.log()
 
     await spawnOpenCode(['--model', modelRef], providerKey, fcmConfig)
+  }
+}
+
+// ─── Proxy lifecycle (multi-account rotation) ─────────────────────────────────
+// 📖 Module-level proxy state — shared between startProxyAndLaunch, cleanupProxy, and renderTable.
+let activeProxy = null         // 📖 ProxyServer instance while proxy is running, null otherwise
+let proxyCleanedUp = false     // 📖 Guards against double-cleanup on concurrent exit signals
+let exitHandlersRegistered = false // 📖 Guards against registering handlers multiple times
+
+// 📖 cleanupProxy: Gracefully stops the active proxy server if one is running.
+// 📖 Called on OpenCode exit and on process exit signals.
+async function cleanupProxy() {
+  if (proxyCleanedUp || !activeProxy) return
+  proxyCleanedUp = true
+  const proxy = activeProxy
+  activeProxy = null
+  try {
+    await proxy.stop()
+  } catch { /* best-effort */ }
+}
+
+// 📖 registerExitHandlers: Ensures SIGINT/SIGTERM/exit handlers are registered exactly once.
+// 📖 Cleans up the proxy before the process exits so we don't leave a dangling HTTP server.
+function registerExitHandlers() {
+  if (exitHandlersRegistered) return
+  exitHandlersRegistered = true
+  const cleanup = () => { cleanupProxy().catch(() => {}) }
+  process.once('SIGINT',  cleanup)
+  process.once('SIGTERM', cleanup)
+  process.once('exit',    cleanup)
+}
+
+// 📖 startProxyAndLaunch: Starts ProxyServer with N accounts and launches OpenCode via fcm-proxy.
+// 📖 Falls back to the normal direct flow if the proxy cannot start.
+function buildProxyTopologyFromConfig(fcmConfig) {
+  const accounts = []
+  const proxyModels = {}
+
+  for (const merged of mergedModels) {
+    proxyModels[merged.slug] = { name: merged.label }
+
+    for (const providerEntry of merged.providers) {
+      const keys = resolveApiKeys(fcmConfig, providerEntry.providerKey)
+      const providerSource = sources[providerEntry.providerKey]
+      if (!providerSource) continue
+
+      const rawUrl = resolveCloudflareUrl(providerSource.url)
+      const baseUrl = rawUrl.replace(/\/chat\/completions$/, '')
+
+      keys.forEach((apiKey, keyIdx) => {
+        accounts.push({
+          id: `${providerEntry.providerKey}/${merged.slug}/${keyIdx}`,
+          providerKey: providerEntry.providerKey,
+          proxyModelId: merged.slug,
+          modelId: providerEntry.modelId,
+          url: baseUrl,
+          apiKey,
+        })
+      })
+    }
+  }
+
+  return { accounts, proxyModels }
+}
+
+async function ensureProxyRunning(fcmConfig, { forceRestart = false } = {}) {
+  registerExitHandlers()
+  proxyCleanedUp = false
+
+  if (forceRestart && activeProxy) {
+    await cleanupProxy()
+  }
+
+  const existingStatus = activeProxy?.getStatus?.()
+  if (existingStatus?.running === true) {
+    // Derive available slugs from the running proxy's accounts
+    const availableModelSlugs = new Set(
+      (activeProxy._accounts || []).map(a => a.proxyModelId).filter(Boolean)
+    )
+    return {
+      port: existingStatus.port,
+      accountCount: existingStatus.accountCount,
+      proxyToken: activeProxy?._proxyApiKey,
+      proxyModels: null,
+      availableModelSlugs,
+    }
+  }
+
+  const { accounts, proxyModels } = buildProxyTopologyFromConfig(fcmConfig)
+  if (accounts.length === 0) {
+    throw new Error('No API keys found for proxy-capable models')
+  }
+
+  const proxyToken = `fcm_${randomUUID().replace(/-/g, '')}`
+  const proxy = new ProxyServer({ accounts, proxyApiKey: proxyToken })
+  const { port } = await proxy.start()
+  activeProxy = proxy
+
+  const availableModelSlugs = new Set(accounts.map(a => a.proxyModelId).filter(Boolean))
+  return { port, accountCount: accounts.length, proxyToken, proxyModels, availableModelSlugs }
+}
+
+// 📖 autoStartProxyIfSynced: Fire-and-forget startup orchestrator.
+// 📖 Reads OpenCode config; if fcm-proxy provider is present, starts the proxy.
+// 📖 Updates state.proxyStartupStatus with explicit transitions:
+// 📖   'starting' → 'running' (with port/accountCount) or 'failed' (with reason).
+// 📖 After the proxy starts, rewrites opencode.json with the runtime port/token so
+// 📖 OpenCode immediately points to the live proxy (not a stale persisted value).
+// 📖 Non-FCM providers and other top-level keys are preserved by mergeOcConfig.
+// 📖 Never throws — must not crash startup.
+async function autoStartProxyIfSynced(fcmConfig, state) {
+  try {
+    const ocConfig = loadOpenCodeConfig()
+    if (!ocConfig?.provider?.['fcm-proxy']) {
+      // 📖 No synced fcm-proxy entry — nothing to auto-start.
+      return
+    }
+
+    state.proxyStartupStatus = { phase: 'starting' }
+
+    const started = await ensureProxyRunning(fcmConfig)
+
+    // 📖 Rewrite opencode.json with the runtime port/token assigned by the OS.
+    // 📖 This is safe: mergeOcConfig (called inside syncToOpenCode) preserves all
+    // 📖 non-FCM providers (anthropic, openai, google, etc.) and other top-level
+    // 📖 keys ($schema, mcp, plugin, command, model).
+    syncToOpenCode(fcmConfig, sources, mergedModels, {
+      proxyPort: started.port,
+      proxyToken: started.proxyToken,
+      availableModelSlugs: started.availableModelSlugs,
+    })
+
+    state.proxyStartupStatus = {
+      phase: 'running',
+      port: started.port,
+      accountCount: started.accountCount,
+    }
+  } catch (err) {
+    state.proxyStartupStatus = {
+      phase: 'failed',
+      reason: err?.message ?? String(err),
+    }
+  }
+}
+
+async function startProxyAndLaunch(model, fcmConfig) {
+  try {
+    const started = await ensureProxyRunning(fcmConfig, { forceRestart: true })
+    const merged = mergedModelByLabel.get(model.label)
+    const defaultProxyModelId = merged?.slug ?? model.modelId
+
+    if (!started.proxyModels || Object.keys(started.proxyModels).length === 0) {
+      throw new Error('Proxy model catalog is empty')
+    }
+
+    console.log(chalk.dim(`  🔀 Multi-account proxy listening on port ${started.port} (${started.accountCount} accounts)`))
+    await startOpenCodeWithProxy(model, started.port, defaultProxyModelId, started.proxyModels, fcmConfig, started.proxyToken)
+  } catch (err) {
+    console.error(chalk.red(`  ✗ Proxy failed to start: ${err.message}`))
+    console.log(chalk.dim('  Falling back to direct single-account flow…'))
+    await cleanupProxy()
+    await startOpenCode(model, fcmConfig)
+  }
+}
+
+// 📖 startOpenCodeWithProxy: Registers fcm-proxy provider in OpenCode config,
+// 📖 spawns OpenCode with that provider, then removes the ephemeral config after exit.
+async function startOpenCodeWithProxy(model, port, proxyModelId, proxyModels, fcmConfig, proxyToken) {
+  const config = loadOpenCodeConfig()
+  if (!config.provider) config.provider = {}
+  const previousProxyProvider = config.provider['fcm-proxy']
+  const previousModel = config.model
+
+  const fallbackModelId = Object.keys(proxyModels)[0]
+  const selectedProxyModelId = proxyModels[proxyModelId] ? proxyModelId : fallbackModelId
+
+  // 📖 Register ephemeral fcm-proxy provider pointing to our local proxy server
+  config.provider['fcm-proxy'] = {
+    npm: '@ai-sdk/openai-compatible',
+    name: 'FCM Proxy',
+    options: {
+      baseURL: `http://127.0.0.1:${port}/v1`,
+      apiKey: proxyToken
+    },
+    models: proxyModels
+  }
+  config.model = `fcm-proxy/${selectedProxyModelId}`
+  saveOpenCodeConfig(config)
+
+  console.log(chalk.green(`  Setting ${chalk.bold(model.label)} via proxy as default for OpenCode…`))
+  console.log(chalk.dim(`  Model: fcm-proxy/${selectedProxyModelId}  •  Proxy: http://127.0.0.1:${port}/v1`))
+  console.log(chalk.dim(`  Catalog: ${Object.keys(proxyModels).length} models available via fcm-proxy`))
+  console.log()
+
+  try {
+    await spawnOpenCode(['--model', `fcm-proxy/${selectedProxyModelId}`], 'fcm-proxy', fcmConfig)
+  } finally {
+    // 📖 Best-effort cleanup: restore previous fcm-proxy/model values if they existed
+    try {
+      const savedCfg = loadOpenCodeConfig()
+      if (!savedCfg.provider) savedCfg.provider = {}
+
+      if (previousProxyProvider) {
+        savedCfg.provider['fcm-proxy'] = previousProxyProvider
+      } else if (savedCfg.provider['fcm-proxy']) {
+        delete savedCfg.provider['fcm-proxy']
+      }
+
+      if (typeof previousModel === 'string' && previousModel.length > 0) {
+        savedCfg.model = previousModel
+      } else if (typeof savedCfg.model === 'string' && savedCfg.model.startsWith('fcm-proxy/')) {
+        delete savedCfg.model
+      }
+
+      saveOpenCodeConfig(savedCfg)
+    } catch { /* best-effort */ }
+    await cleanupProxy()
   }
 }
 
@@ -2756,6 +3087,14 @@ async function main() {
     }))
   syncFavoriteFlags(results, config)
 
+  // 📖 Load usage data from token-stats.json and attach usagePercent to each result row.
+  // 📖 usagePercent is the quota percent remaining (0–100). undefined = no data available.
+  // 📖 Freshness-aware: snapshots older than 30 minutes are excluded (shown as N/A in UI).
+  for (const r of results) {
+    const pct = _usageForRow(r.providerKey, r.modelId)
+    r.usagePercent = typeof pct === 'number' ? pct : undefined
+  }
+
   // 📖 Clamp scrollOffset so cursor is always within the visible viewport window.
   // 📖 Called after every cursor move, sort change, and terminal resize.
   const adjustScrollOffset = (st) => {
@@ -2786,7 +3125,7 @@ async function main() {
   // 📖 Add interactive selection state - cursor index and user's choice
   // 📖 sortColumn: 'rank'|'tier'|'origin'|'model'|'ping'|'avg'|'status'|'verdict'|'uptime'
   // 📖 sortDirection: 'asc' (default) or 'desc'
-  // 📖 pingInterval: current interval in ms (default 2000, adjustable with W/X keys)
+    // 📖 pingInterval: current interval in ms (default 2000, adjustable with W/= keys)
   // 📖 tierFilter: current tier filter letter (null = all, 'S' = S+/S, 'A' = A+/A/A-, etc.)
   const state = {
     results,
@@ -2796,7 +3135,7 @@ async function main() {
     selectedModel: null,
     sortColumn: 'avg',
     sortDirection: 'asc',
-    pingInterval: PING_INTERVAL,  // 📖 Track current interval for W/X keys
+    pingInterval: PING_INTERVAL,  // 📖 Track current interval for W/= keys
     lastPingTime: Date.now(),     // 📖 Track when last ping cycle started
     mode,                         // 📖 'opencode' or 'openclaw' — controls Enter action
     scrollOffset: 0,              // 📖 First visible model index in viewport
@@ -2804,7 +3143,8 @@ async function main() {
     // 📖 Settings screen state (P key opens it)
     settingsOpen: false,          // 📖 Whether settings overlay is active
     settingsCursor: 0,            // 📖 Which provider row is selected in settings
-    settingsEditMode: false,      // 📖 Whether we're in inline key editing mode
+    settingsEditMode: false,      // 📖 Whether we're in inline key editing mode (edit primary key)
+    settingsAddKeyMode: false,    // 📖 Whether we're in add-key mode (append a new key to provider)
     settingsEditBuffer: '',       // 📖 Typed characters for the API key being edited
     settingsErrorMsg: null,       // 📖 Temporary error message to display in settings
     settingsTestResults: {},      // 📖 { providerKey: 'pending'|'ok'|'fail'|null }
@@ -2842,6 +3182,17 @@ async function main() {
     bugReportBuffer: '',          // 📖 Typed characters for the bug report message
     bugReportStatus: 'idle',      // 📖 'idle'|'sending'|'success'|'error' — webhook send status
     bugReportError: null,         // 📖 Last webhook error message
+    // 📖 OpenCode sync status (S key in settings)
+    settingsSyncStatus: null,     // 📖 { type: 'success'|'error', msg: string } — shown in settings footer
+    // 📖 Log page overlay state (X key opens it)
+    logVisible: false,            // 📖 Whether the log page overlay is active
+    logScrollOffset: 0,           // 📖 Vertical scroll offset for log overlay viewport
+    // 📖 Proxy startup status — set by autoStartProxyIfSynced, consumed by Task 3 indicator
+    // 📖 null = not configured/not attempted
+    // 📖 { phase: 'starting' } — proxy start in progress
+    // 📖 { phase: 'running', port, accountCount } — proxy is live
+    // 📖 { phase: 'failed', reason } — proxy failed to start
+    proxyStartupStatus: null,     // 📖 Startup-phase proxy status (null | { phase, ...details })
   }
 
   // 📖 Re-clamp viewport on terminal resize
@@ -2849,6 +3200,12 @@ async function main() {
     state.terminalRows = process.stdout.rows || 24
     adjustScrollOffset(state)
   })
+
+  // 📖 Auto-start proxy on launch if OpenCode config already has an fcm-proxy provider.
+  // 📖 Fire-and-forget: does not block UI startup. state.proxyStartupStatus is updated async.
+  if (mode === 'opencode' || mode === 'opencode-desktop') {
+    void autoStartProxyIfSynced(config, state)
+  }
 
   // 📖 Enter alternate screen — animation runs here, zero scrollback pollution
   process.stdout.write(ALT_ENTER)
@@ -2918,16 +3275,24 @@ async function main() {
       const isCursor = i === state.settingsCursor
       const enabled = isProviderEnabled(state.config, pk)
       const keyVal = state.config.apiKeys?.[pk] ?? ''
+      // 📖 Resolve all keys for this provider (for multi-key display)
+      const allKeys = resolveApiKeys(state.config, pk)
+      const keyCount = allKeys.length
 
       // 📖 Build API key display — mask most chars, show last 4
       let keyDisplay
-      if (state.settingsEditMode && isCursor) {
-        // 📖 Inline editing: show typed buffer with cursor indicator
-        keyDisplay = chalk.cyanBright(`${state.settingsEditBuffer || ''}▏`)
-      } else if (keyVal) {
-        const visible = keyVal.slice(-4)
-        const masked = '•'.repeat(Math.min(16, Math.max(4, keyVal.length - 4)))
-        keyDisplay = chalk.dim(masked + visible)
+      if ((state.settingsEditMode || state.settingsAddKeyMode) && isCursor) {
+        // 📖 Inline editing/adding: show typed buffer with cursor indicator
+        const modePrefix = state.settingsAddKeyMode ? chalk.dim('[+] ') : ''
+        keyDisplay = chalk.cyanBright(`${modePrefix}${state.settingsEditBuffer || ''}▏`)
+      } else if (keyCount > 0) {
+        // 📖 Show the primary (first/string) key masked + count indicator for extras
+        const primaryKey = allKeys[0]
+        const visible = primaryKey.slice(-4)
+        const masked = '•'.repeat(Math.min(16, Math.max(4, primaryKey.length - 4)))
+        const keyMasked = chalk.dim(masked + visible)
+        const extra = keyCount > 1 ? chalk.cyan(` (+${keyCount - 1} more)`) : ''
+        keyDisplay = keyMasked + extra
       } else {
         keyDisplay = chalk.dim('(no key set)')
       }
@@ -3025,7 +3390,12 @@ async function main() {
     if (state.settingsEditMode) {
       lines.push(chalk.dim('  Type API key  •  Enter Save  •  Esc Cancel'))
     } else {
-      lines.push(chalk.dim('  ↑↓ Navigate  •  Enter Edit key / Toggle / Load profile  •  Space Toggle  •  T Test key  •  U Updates  •  ⌫ Delete profile  •  Esc Close'))
+      lines.push(chalk.dim('  ↑↓ Navigate  •  Enter Edit key  •  + Add key  •  - Remove key  •  Space Toggle  •  T Test key  •  S Sync→OpenCode  •  R Restore backup  •  U Updates  •  ⌫ Delete profile  •  Esc Close'))
+    }
+    // 📖 Show sync/restore status message if set
+    if (state.settingsSyncStatus) {
+      const { type, msg } = state.settingsSyncStatus
+      lines.push(type === 'success' ? chalk.greenBright(`  ${msg}`) : chalk.yellow(`  ${msg}`))
     }
     lines.push('')
 
@@ -3091,6 +3461,9 @@ async function main() {
     lines.push('')
     lines.push(`  ${chalk.cyan('Up%')}         Uptime — ratio of successful pings to total pings  ${chalk.dim('Sort:')} ${chalk.yellow('U')}`)
     lines.push(`              ${chalk.dim('If a model only works half the time, you\'ll waste time retrying. Higher = more reliable.')}`)
+    lines.push('')
+    lines.push(`  ${chalk.cyan('Usage')}       Quota percent remaining (from token-stats.json)  ${chalk.dim('Sort:')} ${chalk.yellow('Shift+G')}`)
+    lines.push(`              ${chalk.dim('Shows how much of your quota is still available. Green = plenty left, red = running low.')}`)
 
     lines.push('')
     lines.push(`  ${chalk.bold('Main TUI')}`)
@@ -3100,7 +3473,8 @@ async function main() {
     lines.push('')
     lines.push(`  ${chalk.bold('Controls')}`)
     lines.push(`  ${chalk.yellow('W')}  Decrease ping interval (faster)`)
-    lines.push(`  ${chalk.yellow('X')}  Increase ping interval (slower)`)
+    lines.push(`  ${chalk.yellow('=')}  Increase ping interval (slower)  ${chalk.dim('(was X — X is now the log page)')}`)
+    lines.push(`  ${chalk.yellow('X')}  Toggle request log page  ${chalk.dim('(shows recent requests from request-log.jsonl)')}`)
     lines.push(`  ${chalk.yellow('Z')}  Cycle launch mode  ${chalk.dim('(OpenCode CLI → OpenCode Desktop → OpenClaw)')}`)
     lines.push(`  ${chalk.yellow('F')}  Toggle favorite on selected row  ${chalk.dim('(⭐ pinned at top, persisted)')}`)
     lines.push(`  ${chalk.yellow('Q')}  Smart Recommend  ${chalk.dim('(🎯 find the best model for your task — questionnaire + live analysis)')}`)
@@ -3145,7 +3519,94 @@ async function main() {
     return cleared.join('\n')
   }
 
-  // ─── Smart Recommend overlay renderer ─────────────────────────────────────
+  // ─── Log page overlay renderer ────────────────────────────────────────────
+  // 📖 renderLog: Draw the log page overlay showing recent requests from
+  // 📖 ~/.free-coding-models/request-log.jsonl, newest-first.
+  // 📖 Toggled with X key. Esc or X closes.
+  function renderLog() {
+    const EL = '\x1b[K'
+    const lines = []
+    lines.push('')
+    lines.push(`  ${chalk.bold('📋 Request Log')}  ${chalk.dim('— recent requests • ↑↓ scroll • X or Esc close')}`)
+    lines.push('')
+
+    // 📖 Load recent log entries — bounded read, newest-first, malformed lines skipped.
+    const logRows = loadRecentLogs({ limit: 200 })
+
+    if (logRows.length === 0) {
+      lines.push(chalk.dim('  No log entries found.'))
+      lines.push(chalk.dim('  Logs are written to ~/.free-coding-models/request-log.jsonl'))
+      lines.push(chalk.dim('  when requests are proxied through the multi-account rotation proxy.'))
+    } else {
+      // 📖 Column widths for the log table
+      const W_TIME    = 19
+      const W_TYPE    = 18
+      const W_PROV    = 14
+      const W_MODEL   = 36
+      const W_STATUS  = 8
+      const W_TOKENS  = 9
+      const W_LAT     = 10
+
+      // 📖 Header row
+      const hTime   = chalk.dim('Time'.padEnd(W_TIME))
+      const hType   = chalk.dim('Type'.padEnd(W_TYPE))
+      const hProv   = chalk.dim('Provider'.padEnd(W_PROV))
+      const hModel  = chalk.dim('Model'.padEnd(W_MODEL))
+      const hStatus = chalk.dim('Status'.padEnd(W_STATUS))
+      const hTok    = chalk.dim('Tokens'.padEnd(W_TOKENS))
+      const hLat    = chalk.dim('Latency'.padEnd(W_LAT))
+      lines.push(`  ${hTime}  ${hType}  ${hProv}  ${hModel}  ${hStatus}  ${hTok}  ${hLat}`)
+      lines.push(chalk.dim('  ' + '─'.repeat(W_TIME + W_TYPE + W_PROV + W_MODEL + W_STATUS + W_TOKENS + W_LAT + 12)))
+
+      for (const row of logRows) {
+        // 📖 Format time as HH:MM:SS (strip the date part for compactness)
+        let timeStr = row.time
+        try {
+          const d = new Date(row.time)
+          if (!Number.isNaN(d.getTime())) {
+            timeStr = d.toISOString().replace('T', ' ').slice(0, 19)
+          }
+        } catch { /* keep raw */ }
+
+        // 📖 Color-code status
+        let statusCell
+        const sc = String(row.status)
+        if (sc === '200') {
+          statusCell = chalk.greenBright(sc.padEnd(W_STATUS))
+        } else if (sc === '429') {
+          statusCell = chalk.yellow(sc.padEnd(W_STATUS))
+        } else if (sc.startsWith('5') || sc === 'error') {
+          statusCell = chalk.red(sc.padEnd(W_STATUS))
+        } else {
+          statusCell = chalk.dim(sc.padEnd(W_STATUS))
+        }
+
+        const tokStr = row.tokens > 0 ? String(row.tokens) : '--'
+        const latStr = row.latency > 0 ? `${row.latency}ms` : '--'
+
+        const timeCell  = chalk.dim(timeStr.slice(0, W_TIME).padEnd(W_TIME))
+        const typeCell  = chalk.magenta((row.requestType || '--').slice(0, W_TYPE).padEnd(W_TYPE))
+        const provCell  = chalk.cyan(row.provider.slice(0, W_PROV).padEnd(W_PROV))
+        const modelCell = chalk.white(row.model.slice(0, W_MODEL).padEnd(W_MODEL))
+        const tokCell   = chalk.dim(tokStr.padEnd(W_TOKENS))
+        const latCell   = chalk.dim(latStr.padEnd(W_LAT))
+
+        lines.push(`  ${timeCell}  ${typeCell}  ${provCell}  ${modelCell}  ${statusCell}  ${tokCell}  ${latCell}`)
+      }
+    }
+
+    lines.push('')
+    lines.push(chalk.dim(`  Showing up to 200 most recent entries  •  X or Esc close`))
+    lines.push('')
+
+    const { visible, offset } = sliceOverlayLines(lines, state.logScrollOffset, state.terminalRows)
+    state.logScrollOffset = offset
+    const tintedLines = tintOverlayLines(visible, LOG_OVERLAY_BG)
+    const cleared = tintedLines.map(l => l + EL)
+    return cleared.join('\n')
+  }
+
+
   // 📖 renderRecommend: Draw the Smart Recommend overlay with 3 phases:
   //   1. 'questionnaire' — ask 3 questions (task type, priority, context budget)
   //   2. 'analyzing' — loading screen with progress bar (10s, 2 pings/sec)
@@ -3823,6 +4284,23 @@ async function main() {
       return
     }
 
+    // 📖 Log page overlay: full keyboard navigation + key swallowing while overlay is open.
+    if (state.logVisible) {
+      const pageStep = Math.max(1, (state.terminalRows || 1) - 2)
+      if (key.name === 'escape' || key.name === 'x') {
+        state.logVisible = false
+        return
+      }
+      if (key.name === 'up') { state.logScrollOffset = Math.max(0, state.logScrollOffset - 1); return }
+      if (key.name === 'down') { state.logScrollOffset += 1; return }
+      if (key.name === 'pageup') { state.logScrollOffset = Math.max(0, state.logScrollOffset - pageStep); return }
+      if (key.name === 'pagedown') { state.logScrollOffset += pageStep; return }
+      if (key.name === 'home') { state.logScrollOffset = 0; return }
+      if (key.name === 'end') { state.logScrollOffset = Number.MAX_SAFE_INTEGER; return }
+      if (key.ctrl && key.name === 'c') { exit(0); return }
+      return
+    }
+
     // 📖 Smart Recommend overlay: full keyboard handling while overlay is open.
     if (state.recommendOpen) {
       if (key.ctrl && key.name === 'c') { exit(0); return }
@@ -3939,10 +4417,10 @@ async function main() {
       const profileStartIdx = updateRowIdx + 1
       const maxRowIdx = savedProfiles.length > 0 ? profileStartIdx + savedProfiles.length - 1 : updateRowIdx
 
-      // 📖 Edit mode: capture typed characters for the API key
-      if (state.settingsEditMode) {
+      // 📖 Edit/Add-key mode: capture typed characters for the API key
+      if (state.settingsEditMode || state.settingsAddKeyMode) {
         if (key.name === 'return') {
-          // 📖 Save the new key and exit edit mode
+          // 📖 Save the new key and exit edit/add mode
           const pk = providerKeys[state.settingsCursor]
           const newKey = state.settingsEditBuffer.trim()
           if (newKey) {
@@ -3950,19 +4428,28 @@ async function main() {
             if (pk === 'openrouter' && !newKey.startsWith('sk-or-')) {
               // 📖 Don't save corrupted keys - show warning and cancel
               state.settingsEditMode = false
+              state.settingsAddKeyMode = false
               state.settingsEditBuffer = ''
               state.settingsErrorMsg = '⚠️  OpenRouter keys must start with "sk-or-". Key not saved.'
               setTimeout(() => { state.settingsErrorMsg = null }, 3000)
               return
             }
-            state.config.apiKeys[pk] = newKey
+            if (state.settingsAddKeyMode) {
+              // 📖 Add-key mode: append new key (addApiKey handles duplicates/empty)
+              addApiKey(state.config, pk, newKey)
+            } else {
+              // 📖 Edit mode: replace the primary key (string-level)
+              state.config.apiKeys[pk] = newKey
+            }
             saveConfig(state.config)
           }
           state.settingsEditMode = false
+          state.settingsAddKeyMode = false
           state.settingsEditBuffer = ''
         } else if (key.name === 'escape') {
           // 📖 Cancel without saving
           state.settingsEditMode = false
+          state.settingsAddKeyMode = false
           state.settingsEditBuffer = ''
         } else if (key.name === 'backspace') {
           state.settingsEditBuffer = state.settingsEditBuffer.slice(0, -1)
@@ -3977,6 +4464,10 @@ async function main() {
       if (key.name === 'escape' || key.name === 'p') {
         // 📖 Close settings — rebuild results to reflect provider changes
         state.settingsOpen = false
+        state.settingsEditMode = false
+        state.settingsAddKeyMode = false
+        state.settingsEditBuffer = ''
+        state.settingsSyncStatus = null  // 📖 Clear sync status on close
         // 📖 Rebuild results: add models from newly enabled providers, remove disabled
         results = MODELS
           .filter(([,,,,,pk]) => isProviderEnabled(state.config, pk))
@@ -4137,6 +4628,63 @@ async function main() {
       }
 
       if (key.ctrl && key.name === 'c') { exit(0); return }
+
+       // 📖 S key: sync FCM provider entries to OpenCode config (merge, don't replace)
+        if (key.name === 's' && !key.shift && !key.ctrl) {
+          try {
+            // 📖 Sync now also ensures proxy is running, so OpenCode can use fcm-proxy immediately.
+            const started = await ensureProxyRunning(state.config)
+            const result = syncToOpenCode(state.config, sources, mergedModels, {
+              proxyPort: started.port,
+              proxyToken: started.proxyToken,
+              availableModelSlugs: started.availableModelSlugs,
+            })
+            state.settingsSyncStatus = {
+              type: 'success',
+              msg: `✅ Synced ${result.providerKey} (${result.modelCount} models), proxy running on :${started.port}`,
+            }
+        } catch (err) {
+          state.settingsSyncStatus = { type: 'error', msg: `❌ Sync failed: ${err.message}` }
+        }
+        return
+      }
+
+      // 📖 R key: restore OpenCode config from backup (opencode.json.bak)
+      if (key.name === 'r' && !key.shift && !key.ctrl) {
+        try {
+          const restored = restoreOpenCodeBackup()
+          state.settingsSyncStatus = restored
+            ? { type: 'success', msg: '✅ OpenCode config restored from backup' }
+            : { type: 'error', msg: '⚠  No backup found (opencode.json.bak)' }
+        } catch (err) {
+          state.settingsSyncStatus = { type: 'error', msg: `❌ Restore failed: ${err.message}` }
+        }
+        return
+      }
+
+      // 📖 + key: open add-key input (empty buffer) — appends new key on Enter
+      if ((str === '+' || key.name === '+') && state.settingsCursor < providerKeys.length) {
+        state.settingsEditBuffer = ''      // 📖 Start with empty buffer (not existing key)
+        state.settingsAddKeyMode = true    // 📖 Add mode: Enter will append, not replace
+        state.settingsEditMode = false
+        return
+      }
+
+      // 📖 - key: remove one key (last by default) instead of deleting entire provider
+      if ((str === '-' || key.name === '-') && state.settingsCursor < providerKeys.length) {
+        const pk = providerKeys[state.settingsCursor]
+        const removed = removeApiKey(state.config, pk)  // removes last key; collapses array-of-1 to string
+        if (removed) {
+          saveConfig(state.config)
+          const remaining = resolveApiKeys(state.config, pk).length
+          const msg = remaining > 0
+            ? `✅ Removed one key for ${pk} (${remaining} remaining)`
+            : `✅ Removed last API key for ${pk}`
+          state.settingsSyncStatus = { type: 'success', msg }
+        }
+        return
+      }
+
       return // 📖 Swallow all other keys while settings is open
     }
 
@@ -4145,6 +4693,7 @@ async function main() {
       state.settingsOpen = true
       state.settingsCursor = 0
       state.settingsEditMode = false
+      state.settingsAddKeyMode = false
       state.settingsEditBuffer = ''
       state.settingsScrollOffset = 0
       return
@@ -4224,6 +4773,7 @@ async function main() {
     // 📖 Sorting keys: R=rank, Y=tier, O=origin, M=model, L=latest ping, A=avg ping, S=SWE-bench, C=context, H=health, V=verdict, B=stability, U=uptime
     // 📖 T is reserved for tier filter cycling — tier sort moved to Y
     // 📖 N is now reserved for origin filter cycling
+    // 📖 G (Shift+G) is handled separately below for usage sort
     const sortKeys = {
       'r': 'rank', 'y': 'tier', 'o': 'origin', 'm': 'model',
       'l': 'ping', 'a': 'avg', 's': 'swe', 'c': 'ctx', 'h': 'condition', 'v': 'verdict', 'b': 'stability', 'u': 'uptime'
@@ -4239,6 +4789,22 @@ async function main() {
         state.sortDirection = 'asc'
       }
       // 📖 Recompute visible sorted list and reset cursor to top to avoid stale index
+      const visible = state.results.filter(r => !r.hidden)
+      state.visibleSorted = sortResultsWithPinnedFavorites(visible, state.sortColumn, state.sortDirection)
+      state.cursor = 0
+      state.scrollOffset = 0
+      return
+    }
+
+    // 📖 Shift+G: sort by usage (quota percent remaining from token-stats.json)
+    if (key.name === 'g' && key.shift && !key.ctrl) {
+      const col = 'usage'
+      if (state.sortColumn === col) {
+        state.sortDirection = state.sortDirection === 'asc' ? 'desc' : 'asc'
+      } else {
+        state.sortColumn = col
+        state.sortDirection = 'asc'
+      }
       const visible = state.results.filter(r => !r.hidden)
       state.visibleSorted = sortResultsWithPinnedFavorites(visible, state.sortColumn, state.sortDirection)
       state.cursor = 0
@@ -4290,11 +4856,12 @@ async function main() {
       return
     }
 
-    // 📖 Interval adjustment keys: W=decrease (faster), X=increase (slower)
+    // 📖 Interval adjustment keys: W=decrease (faster), ==increase (slower)
+    // 📖 X was previously used for interval increase but is now reserved for the log page overlay.
     // 📖 Minimum 1s, maximum 60s
     if (key.name === 'w') {
       state.pingInterval = Math.max(1000, state.pingInterval - 1000)
-    } else if (key.name === 'x') {
+    } else if (str === '=' || key.name === '=') {
       state.pingInterval = Math.min(60000, state.pingInterval + 1000)
     }
 
@@ -4338,8 +4905,11 @@ async function main() {
       return
     }
 
+    // 📖 X key: toggle the log page overlay (shows recent requests from request-log.jsonl).
+    // 📖 NOTE: X was previously used for ping-interval increase; that binding moved to '='.
     if (key.name === 'x') {
-      state.pingInterval = Math.min(60000, state.pingInterval + 1000)
+      state.logVisible = !state.logVisible
+      if (state.logVisible) state.logScrollOffset = 0
       return
     }
 
@@ -4409,7 +4979,14 @@ async function main() {
       } else if (state.mode === 'opencode-desktop') {
         await startOpenCodeDesktop(userSelected, state.config)
       } else {
-        await startOpenCode(userSelected, state.config)
+        const topology = buildProxyTopologyFromConfig(state.config)
+        if (topology.accounts.length === 0) {
+          console.log(chalk.yellow(`  No API keys found for proxy model catalog. Falling back to direct flow.`))
+          console.log()
+          await startOpenCode(userSelected, state.config)
+        } else {
+          await startProxyAndLaunch(userSelected, state.config)
+        }
       }
       process.exit(0)
     }
@@ -4441,7 +5018,9 @@ async function main() {
             ? renderBugReport()
             : state.helpVisible
               ? renderHelp()
-              : renderTable(state.results, state.pendingPings, state.frame, state.cursor, state.sortColumn, state.sortDirection, state.pingInterval, state.lastPingTime, state.mode, tierFilterMode, state.scrollOffset, state.terminalRows, originFilterMode, state.activeProfile, state.profileSaveMode, state.profileSaveBuffer)
+              : state.logVisible
+                ? renderLog()
+                : renderTable(state.results, state.pendingPings, state.frame, state.cursor, state.sortColumn, state.sortDirection, state.pingInterval, state.lastPingTime, state.mode, tierFilterMode, state.scrollOffset, state.terminalRows, originFilterMode, state.activeProfile, state.profileSaveMode, state.profileSaveBuffer, state.proxyStartupStatus)
     process.stdout.write(ALT_HOME + content)
   }, Math.round(1000 / FPS))
 
@@ -4449,7 +5028,7 @@ async function main() {
   const initialVisible = state.results.filter(r => !r.hidden)
   state.visibleSorted = sortResultsWithPinnedFavorites(initialVisible, state.sortColumn, state.sortDirection)
 
-  process.stdout.write(ALT_HOME + renderTable(state.results, state.pendingPings, state.frame, state.cursor, state.sortColumn, state.sortDirection, state.pingInterval, state.lastPingTime, state.mode, tierFilterMode, state.scrollOffset, state.terminalRows, originFilterMode, state.activeProfile, state.profileSaveMode, state.profileSaveBuffer))
+  process.stdout.write(ALT_HOME + renderTable(state.results, state.pendingPings, state.frame, state.cursor, state.sortColumn, state.sortDirection, state.pingInterval, state.lastPingTime, state.mode, tierFilterMode, state.scrollOffset, state.terminalRows, originFilterMode, state.activeProfile, state.profileSaveMode, state.profileSaveBuffer, state.proxyStartupStatus))
 
   // 📖 If --recommend was passed, auto-open the Smart Recommend overlay on start
   if (cliArgs.recommendMode) {
@@ -4471,7 +5050,14 @@ async function main() {
   const pingModel = async (r) => {
     const providerApiKey = getApiKey(state.config, r.providerKey) ?? null
     const providerUrl = sources[r.providerKey]?.url ?? sources.nvidia.url
-    const { code, ms } = await ping(providerApiKey, r.modelId, r.providerKey, providerUrl)
+    let { code, ms, quotaPercent } = await ping(providerApiKey, r.modelId, r.providerKey, providerUrl)
+
+    if ((quotaPercent === null || quotaPercent === undefined) && providerApiKey) {
+      const providerQuota = await getProviderQuotaPercentCached(r.providerKey, providerApiKey)
+      if (typeof providerQuota === 'number' && Number.isFinite(providerQuota)) {
+        quotaPercent = providerQuota
+      }
+    }
 
     // 📖 Store ping result as object with ms and code
     // 📖 ms = actual response time (even for errors like 429)
@@ -4492,15 +5078,37 @@ async function main() {
       r.status = 'down'
       r.httpCode = code
     }
+
+    if (typeof quotaPercent === 'number' && Number.isFinite(quotaPercent)) {
+      r.usagePercent = quotaPercent
+      // Provider-level fallback: apply latest known quota to sibling rows on same provider.
+      for (const sibling of state.results) {
+        if (sibling.providerKey === r.providerKey && (sibling.usagePercent === undefined || sibling.usagePercent === null)) {
+          sibling.usagePercent = quotaPercent
+        }
+      }
+    }
   }
 
   // 📖 Initial ping of all models
   const initialPing = Promise.all(state.results.map(r => pingModel(r)))
 
-  // 📖 Continuous ping loop with dynamic interval (adjustable with W/X keys)
+  // 📖 Continuous ping loop with dynamic interval (adjustable with W/= keys)
   const schedulePing = () => {
     state.pingIntervalObj = setTimeout(async () => {
       state.lastPingTime = Date.now()
+
+      // 📖 Refresh persisted usage snapshots each cycle so proxy writes appear live in table.
+      // 📖 Freshness-aware: stale snapshots (>30m) are excluded and row reverts to undefined.
+      for (const r of state.results) {
+        const pct = _usageForRow(r.providerKey, r.modelId)
+        if (typeof pct === 'number' && Number.isFinite(pct)) {
+          r.usagePercent = pct
+        } else {
+          // If snapshot is now stale or gone, clear the cached value so UI shows N/A.
+          r.usagePercent = undefined
+        }
+      }
 
       state.results.forEach(r => {
         pingModel(r).catch(() => {
@@ -4521,7 +5129,7 @@ async function main() {
 
   // 📖 Keep interface running forever - user can select anytime or Ctrl+C to exit
   // 📖 The pings continue running in background with dynamic interval
-  // 📖 User can press W to decrease interval (faster pings) or X to increase (slower)
+  // 📖 User can press W to decrease interval (faster pings) or = to increase (slower)
   // 📖 Current interval shown in header: "next ping Xs"
 }
 
