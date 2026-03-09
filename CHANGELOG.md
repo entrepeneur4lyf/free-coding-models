@@ -2,6 +2,14 @@
 
 ---
 
+## 0.1.87
+
+### Fixed
+
+- 🎨 Rebalanced `Perplexity`, `Hyperbolic`, and `Together AI` provider colors so they are more visually distinct from `NIM` and from each other in the TUI.
+
+---
+
 ## 0.1.86
 
 ### Fixed

@@ -147,7 +147,7 @@ export const PROVIDER_METADATA = {
   },
   hyperbolic: {
     label: 'Hyperbolic',
-    color: chalk.rgb(200, 230, 201),
+    color: chalk.rgb(255, 171, 145),
     signupUrl: 'https://app.hyperbolic.ai/settings',
     signupHint: 'Settings → API Keys',
     rateLimits: '$1 free trial credits',
@@ -175,7 +175,7 @@ export const PROVIDER_METADATA = {
   },
   together: {
     label: 'Together AI',
-    color: chalk.rgb(197, 225, 165),
+    color: chalk.rgb(255, 241, 118),
     signupUrl: 'https://api.together.ai/settings/api-keys',
     signupHint: 'Settings → API keys',
     rateLimits: 'Credits/promos vary by account (check console)',
@@ -189,7 +189,7 @@ export const PROVIDER_METADATA = {
   },
   perplexity: {
     label: 'Perplexity API',
-    color: chalk.rgb(159, 234, 201),
+    color: chalk.rgb(244, 143, 177),
     signupUrl: 'https://www.perplexity.ai/settings/api',
     signupHint: 'Generate API key (billing may be required)',
     rateLimits: 'Tiered limits by spend (default ~50 RPM)',
