@@ -425,7 +425,7 @@ export async function startOpenCode(model, fcmConfig) {
       config.provider.codestral = {
         npm: '@ai-sdk/openai-compatible',
         name: 'Mistral Codestral',
-        options: { baseURL: 'https://codestral.mistral.ai/v1', apiKey: '{env:CODESTRAL_API_KEY}' },
+        options: { baseURL: 'https://api.mistral.ai/v1', apiKey: '{env:CODESTRAL_API_KEY}' },
         models: {}
       }
     } else if (providerKey === 'hyperbolic') {
@@ -889,7 +889,7 @@ export async function startOpenCodeDesktop(model, fcmConfig) {
       config.provider.codestral = {
         npm: '@ai-sdk/openai-compatible',
         name: 'Mistral Codestral',
-        options: { baseURL: 'https://codestral.mistral.ai/v1', apiKey: '{env:CODESTRAL_API_KEY}' },
+        options: { baseURL: 'https://api.mistral.ai/v1', apiKey: '{env:CODESTRAL_API_KEY}' },
         models: {}
       }
     } else if (providerKey === 'hyperbolic') {

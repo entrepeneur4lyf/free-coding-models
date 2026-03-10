@@ -384,7 +384,7 @@ export const sources = {
   },
   codestral: {
     name: 'Codestral',
-    url: 'https://codestral.mistral.ai/v1/chat/completions',
+    url: 'https://api.mistral.ai/v1/chat/completions',
     models: codestral,
   },
   hyperbolic: {
