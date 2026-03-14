@@ -2,6 +2,14 @@
 
 ---
 
+## 0.2.10
+
+### Changed
+- **Discord invite link**: Updated to permanent non-expiring link `https://discord.gg/ZTNFHvvCkU` in README and TUI footer
+- **NVIDIA NIM**: Added MiniMax M2.5 (S+ tier) to model list
+
+---
+
 ## 0.2.9
 
 ### Fixed
