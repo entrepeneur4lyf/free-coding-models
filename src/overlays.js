@@ -4,7 +4,7 @@
  *
  * @details
  *   This module centralizes all overlay rendering in one place:
- *   - Settings, Install Endpoints, Help, Log, Smart Recommend, Feature Request, Bug Report
+ *   - Settings, Install Endpoints, Help, Log, Smart Recommend, Feature Request, Bug Report, Changelog
  *   - Settings diagnostics for provider key tests, including wrapped retry/error details
  *   - Recommend analysis timer orchestration and progress updates
  *
@@ -16,6 +16,8 @@
  *
  * @exports { createOverlayRenderers }
  */
+
+import { loadChangelog } from './changelog-loader.js'
 
 export function createOverlayRenderers(state, deps) {
   const {
@@ -610,6 +612,7 @@ export function createOverlayRenderers(state, deps) {
     lines.push(`  ${chalk.yellow('Shift+S')}  Save current config as a named profile  ${chalk.dim('(inline prompt — type name + Enter)')}`)
     lines.push(`             ${chalk.dim('Profiles store: favorites, sort, tier filter, ping interval, configured-only filter, API keys.')}`)
     lines.push(`             ${chalk.dim('Use --profile <name> to load a profile on startup.')}`)
+    lines.push(`  ${chalk.yellow('N')}  Changelog  ${chalk.dim('(📋 what changed in this version)')}`)
     lines.push(`  ${chalk.yellow('K')} / ${chalk.yellow('Esc')}  Show/hide this help`)
     lines.push(`  ${chalk.yellow('Ctrl+C')}  Exit`)
     lines.push('')
@@ -1239,6 +1242,67 @@ export function createOverlayRenderers(state, deps) {
     return cleared.join('\n')
   }
 
+  // ─── Changelog overlay renderer ───────────────────────────────────────────
+  // 📖 renderChangelog: Show CHANGELOG.md in a scrollable overlay
+  function renderChangelog() {
+    const EL = '\x1b[K'
+    const lines = []
+
+    // 📖 Branding header
+    lines.push(`  ${chalk.cyanBright('🚀')} ${chalk.bold.cyanBright('free-coding-models')} ${chalk.dim(`v${LOCAL_VERSION}`)}`)
+    lines.push(`  ${chalk.bold('📋 Changelog')}`)
+    lines.push(`  ${chalk.dim('— ↑↓ / PgUp / PgDn / Home / End scroll • C or Esc close')}`)
+    lines.push('')
+
+    // 📖 Load and format changelog
+    const changelogData = loadChangelog()
+    const { versions } = changelogData
+    const versionList = Object.keys(versions).sort((a, b) => {
+      const aParts = a.split('.').map(Number)
+      const bParts = b.split('.').map(Number)
+      for (let i = 0; i < Math.max(aParts.length, bParts.length); i++) {
+        const aVal = aParts[i] || 0
+        const bVal = bParts[i] || 0
+        if (bVal !== aVal) return bVal - aVal
+      }
+      return 0
+    })
+
+    // 📖 Render each version
+    for (const version of versionList) {
+      const changes = versions[version]
+      lines.push(`  ${chalk.bold.cyanBright(`v${version}`)}`)
+      lines.push('')
+
+      const sections = { added: '✨ Added', fixed: '🐛 Fixed', changed: '🔄 Changed', updated: '📝 Updated' }
+      for (const [key, label] of Object.entries(sections)) {
+        if (changes[key] && changes[key].length > 0) {
+          lines.push(`    ${chalk.yellow(label)}`)
+          for (const item of changes[key]) {
+            // 📖 Unwrap markdown bold/code markers for display
+            let displayText = item.replace(/\*\*([^*]+)\*\*/g, '$1').replace(/`([^`]+)`/g, '$1')
+            // 📖 Wrap long lines
+            const maxWidth = state.terminalCols - 20
+            if (displayText.length > maxWidth) {
+              displayText = displayText.substring(0, maxWidth - 3) + '…'
+            }
+            lines.push(`      • ${displayText}`)
+          }
+          lines.push('')
+        }
+      }
+      lines.push('')
+    }
+
+    // 📖 Use scrolling with overlay handler
+    const CHANGELOG_OVERLAY_BG = chalk.bgRgb(10, 40, 80)  // Dark blue background
+    const { visible, offset } = sliceOverlayLines(lines, state.changelogScrollOffset, state.terminalRows)
+    state.changelogScrollOffset = offset
+    const tintedLines = tintOverlayLines(visible, CHANGELOG_OVERLAY_BG, state.terminalCols)
+    const cleared = tintedLines.map(l => l + EL)
+    return cleared.join('\n')
+  }
+
   // 📖 stopRecommendAnalysis: cleanup timers if user cancels during analysis
   function stopRecommendAnalysis() {
     if (state.recommendAnalysisTimer) { clearInterval(state.recommendAnalysisTimer); state.recommendAnalysisTimer = null }
@@ -1253,6 +1317,7 @@ export function createOverlayRenderers(state, deps) {
     renderRecommend,
     renderFeatureRequest,
     renderBugReport,
+    renderChangelog,
     startRecommendAnalysis,
     stopRecommendAnalysis,
   }

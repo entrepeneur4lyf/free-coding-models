@@ -444,6 +444,9 @@ async function main() {
     logVisible: false,            // 📖 Whether the log page overlay is active
     logScrollOffset: 0,           // 📖 Vertical scroll offset for log overlay viewport
     logShowAll: false,             // 📖 Show all logs (true) or limited to 500 (false)
+    // 📖 Changelog overlay state (C key opens it)
+    changelogOpen: false,         // 📖 Whether the changelog overlay is active
+    changelogScrollOffset: 0,     // 📖 Vertical scroll offset for changelog overlay viewport
     // 📖 Proxy startup status — set by autoStartProxyIfSynced, consumed by Task 3 indicator
     // 📖 null = not configured/not attempted
     // 📖 { phase: 'starting' } — proxy start in progress
@@ -771,12 +774,12 @@ async function main() {
   process.stdin.on('keypress', onKeyPress)
   process.on('SIGCONT', noteUserActivity)
 
-  // 📖 Animation loop: render settings overlay, recommend overlay, help overlay, feature request overlay, bug report overlay, OR main table
+  // 📖 Animation loop: render settings overlay, recommend overlay, help overlay, feature request overlay, bug report overlay, changelog overlay, OR main table
   ticker = setInterval(() => {
     refreshAutoPingMode()
     state.frame++
     // 📖 Cache visible+sorted models each frame so Enter handler always matches the display
-    if (!state.settingsOpen && !state.installEndpointsOpen && !state.recommendOpen && !state.featureRequestOpen && !state.bugReportOpen) {
+    if (!state.settingsOpen && !state.installEndpointsOpen && !state.recommendOpen && !state.featureRequestOpen && !state.bugReportOpen && !state.changelogOpen) {
       const visible = state.results.filter(r => !r.hidden)
       state.visibleSorted = sortResultsWithPinnedFavorites(visible, state.sortColumn, state.sortDirection)
     }
@@ -794,6 +797,8 @@ async function main() {
                 ? overlays.renderHelp()
               : state.logVisible
                 ? overlays.renderLog()
+              : state.changelogOpen
+                ? overlays.renderChangelog()
                 : renderTable(state.results, state.pendingPings, state.frame, state.cursor, state.sortColumn, state.sortDirection, state.pingInterval, state.lastPingTime, state.mode, state.tierFilterMode, state.scrollOffset, state.terminalRows, state.terminalCols, state.originFilterMode, state.activeProfile, state.profileSaveMode, state.profileSaveBuffer, state.proxyStartupStatus, state.pingMode, state.pingModeSource, state.hideUnconfiguredModels, state.widthWarningStartedAt, state.widthWarningDismissed, state.settingsUpdateState, state.settingsUpdateLatestVersion, getProxySettings(state.config).enabled === true, state.isOutdated, state.latestVersion)
     process.stdout.write(ALT_HOME + content)
   }, Math.round(1000 / FPS))

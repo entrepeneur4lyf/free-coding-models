@@ -766,6 +766,23 @@ export function createKeyHandler(ctx) {
       return
     }
 
+    // 📖 Changelog overlay: full keyboard navigation + key swallowing while overlay is open.
+    if (state.changelogOpen) {
+      const pageStep = Math.max(1, (state.terminalRows || 1) - 2)
+      if (key.name === 'escape' || key.name === 'n') {
+        state.changelogOpen = false
+        return
+      }
+      if (key.name === 'up') { state.changelogScrollOffset = Math.max(0, state.changelogScrollOffset - 1); return }
+      if (key.name === 'down') { state.changelogScrollOffset += 1; return }
+      if (key.name === 'pageup') { state.changelogScrollOffset = Math.max(0, state.changelogScrollOffset - pageStep); return }
+      if (key.name === 'pagedown') { state.changelogScrollOffset += pageStep; return }
+      if (key.name === 'home') { state.changelogScrollOffset = 0; return }
+      if (key.name === 'end') { state.changelogScrollOffset = Number.MAX_SAFE_INTEGER; return }
+      if (key.ctrl && key.name === 'c') { exit(0); return }
+      return
+    }
+
     // 📖 Smart Recommend overlay: full keyboard handling while overlay is open.
     if (state.recommendOpen) {
       if (key.ctrl && key.name === 'c') { exit(0); return }
@@ -1459,6 +1476,13 @@ export function createKeyHandler(ctx) {
     if (key.name === 'k') {
       state.helpVisible = !state.helpVisible
       if (state.helpVisible) state.helpScrollOffset = 0
+      return
+    }
+
+    // 📖 Changelog overlay key: N = toggle changelog overlay
+    if (key.name === 'n') {
+      state.changelogOpen = !state.changelogOpen
+      if (state.changelogOpen) state.changelogScrollOffset = 0
       return
     }
 
