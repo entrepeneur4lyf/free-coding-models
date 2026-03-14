@@ -85,8 +85,8 @@ By Vanessa Depraute
 - **🎮 Interactive selection** — Navigate with arrow keys directly in the table, press Enter to act
 - **💻 OpenCode integration** — Auto-detects NIM setup, sets model as default, launches OpenCode
 - **🦞 OpenClaw integration** — Sets selected model as default provider in `~/.openclaw/openclaw.json`
-- **🧰 Public tool launchers** — `Enter` can auto-configure and launch `OpenCode CLI`, `OpenCode Desktop`, `OpenClaw`, `Crush`, and `Goose`
-- **🔌 Install Endpoints flow** — Press `Y` to install one configured provider directly into `OpenCode CLI`, `OpenCode Desktop`, `OpenClaw`, `Crush`, or `Goose`, either with the full provider catalog or a curated subset of models
+- **🧰 Public tool launchers** — `Enter` auto-configures and launches 10+ tools: `OpenCode CLI`, `OpenCode Desktop`, `OpenClaw`, `Crush`, `Goose`, `Aider`, `Claude Code`, `Codex`, `Gemini`, `Qwen`, `OpenHands`, `Amp`, and `Pi`. All tools auto-select the chosen model on launch.
+- **🔌 Install Endpoints flow** — Press `Y` to install one configured provider directly into `OpenCode CLI`, `OpenCode Desktop`, `OpenClaw`, `Crush`, `Goose`, `Aider`, or `Gemini`, either with the full provider catalog or a curated subset of models
 - **📝 Feature Request (J key)** — Send anonymous feedback directly to the project team
 - **🐛 Bug Report (I key)** — Send anonymous bug reports directly to the project team
  - **🎨 Clean output** — Zero scrollback pollution, interface stays open until Ctrl+C
@@ -594,6 +594,30 @@ Use **↑↓** to scroll and **Esc** or **X** to return to the main table.
 
 ---
 
+## 🧰 Supported Tool Launchers
+
+You can use `free-coding-models` with 12+ AI coding tools. When you select a model and press Enter, the tool automatically configures and pre-selects your chosen model:
+
+| Tool | Flag | Auto-Config |
+|------|------|------------|
+| OpenCode CLI | `--opencode` | ~/.config/opencode/opencode.json |
+| OpenCode Desktop | `--opencode-desktop` | Opens Desktop app |
+| OpenClaw | `--openclaw` | ~/.openclaw/openclaw.json |
+| Crush | `--crush` | ~/.config/crush/crush.json |
+| Goose | `--goose` | Environment variables |
+| **Aider** | `--aider` | ~/.aider.conf.yml |
+| **Claude Code** | `--claude-code` | CLI flag |
+| **Codex** | `--codex` | CLI flag |
+| **Gemini** | `--gemini` | ~/.gemini/settings.json |
+| **Qwen** | `--qwen` | ~/.qwen/settings.json |
+| **OpenHands** | `--openhands` | LLM_MODEL env var |
+| **Amp** | `--amp` | ~/.config/amp/settings.json |
+| **Pi** | `--pi` | ~/.pi/agent/settings.json |
+
+Press **Z** to cycle through different tool modes in the TUI, or use flags to start in your preferred mode.
+
+---
+
 ## 🔌 OpenCode Integration
 
 **The easiest way** — let `free-coding-models` do everything:
@@ -604,7 +628,7 @@ Use **↑↓** to scroll and **Esc** or **X** to return to the main table.
 4. **Press Enter** — tool automatically:
    - Detects if NVIDIA NIM is configured in OpenCode
    - Sets your selected model as default in `~/.config/opencode/opencode.json`
-   - Launches OpenCode with the model ready to use
+   - Launches OpenCode with the model pre-selected and ready to use
 
 ### tmux sub-agent panes
 
