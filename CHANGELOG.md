@@ -2,6 +2,13 @@
 
 ---
 
+## 0.2.15
+
+### Changed
+- **Changelog scrolling experience**: Circular wrap-around scrolling in changelog details (N key) — up at the top now wraps to the bottom, down at the bottom wraps to the top. PageUp/PageDown also wrap for seamless infinite browsing, just like the main TUI list navigation. Home/End still jump to absolute first/last positions for quick access.
+
+---
+
 ## 0.2.14
 
 ### Fixed
