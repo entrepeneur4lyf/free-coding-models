@@ -33,10 +33,12 @@ import { getToolMeta } from './tool-metadata.js'
 const PROXY_PROVIDER_ID = 'fcm-proxy'
 
 // 📖 Tools that support proxy sync (have base URL + API key config)
-// 📖 Gemini is excluded — it only stores a model name, no URL/key fields
+// 📖 Gemini is excluded — it only stores a model name, no URL/key fields.
+// 📖 Claude Code is excluded too: its free-claude-code style integration is
+// 📖 runtime-only now, with fake Claude ids handled by the proxy itself.
 export const PROXY_SYNCABLE_TOOLS = [
   'opencode', 'opencode-desktop', 'openclaw', 'crush', 'goose', 'pi',
-  'aider', 'amp', 'qwen', 'claude-code', 'codex', 'openhands',
+  'aider', 'amp', 'qwen', 'codex', 'openhands',
 ]
 
 const PROXY_SYNCABLE_CANONICAL = new Set(PROXY_SYNCABLE_TOOLS.map(tool => tool === 'opencode-desktop' ? 'opencode' : tool))
@@ -341,9 +343,8 @@ function syncEnvTool(proxyInfo, mergedModels, toolMode) {
   // 📖 Claude Code: Anthropic-specific env vars
   if (toolMode === 'claude-code') {
     const proxyBase = proxyInfo.baseUrl.replace(/\/v1$/, '')
-    envLines.push(`export ANTHROPIC_API_KEY="${proxyInfo.token}"`)
+    envLines.push(`export ANTHROPIC_AUTH_TOKEN="${proxyInfo.token}"`)
     envLines.push(`export ANTHROPIC_BASE_URL="${proxyBase}"`)
-    envLines.push(`export ANTHROPIC_MODEL="${primarySlug}"`)
   }
 
   ensureDirFor(envFilePath)

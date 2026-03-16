@@ -9,7 +9,7 @@
  *    The proxy server uses these accounts for multi-key rotation and load balancing.
  *
  * @functions
- *   → buildProxyTopologyFromConfig(fcmConfig, mergedModels, sources) — build accounts + proxyModels
+ *   → buildProxyTopologyFromConfig(fcmConfig, mergedModels, sources) — build accounts + proxyModels + Anthropic family routing
  *   → buildMergedModelsForDaemon() — standalone helper to build merged models without TUI
  *
  * @exports buildProxyTopologyFromConfig, buildMergedModelsForDaemon
@@ -17,7 +17,7 @@
  * @see bin/fcm-proxy-daemon.js — standalone daemon that uses this directly
  */
 
-import { resolveApiKeys } from './config.js'
+import { resolveApiKeys, getProxySettings } from './config.js'
 import { resolveCloudflareUrl } from './ping.js'
 
 /**
@@ -29,7 +29,7 @@ import { resolveCloudflareUrl } from './ping.js'
  * @param {object} fcmConfig — live config from loadConfig()
  * @param {Array} mergedModels — output of buildMergedModels(MODELS)
  * @param {object} sourcesMap — the sources object keyed by providerKey
- * @returns {{ accounts: Array, proxyModels: Record<string, { name: string }> }}
+ * @returns {{ accounts: Array, proxyModels: Record<string, { name: string }>, anthropicRouting: { model: string|null, modelOpus: string|null, modelSonnet: string|null, modelHaiku: string|null } }}
  */
 export function buildProxyTopologyFromConfig(fcmConfig, mergedModels, sourcesMap) {
   const accounts = []
@@ -64,7 +64,12 @@ export function buildProxyTopologyFromConfig(fcmConfig, mergedModels, sourcesMap
     }
   }
 
-  return { accounts, proxyModels }
+  return {
+    accounts,
+    proxyModels,
+    // 📖 Mirror free-claude-code: proxy-side Claude family routing is config-driven.
+    anthropicRouting: getProxySettings(fcmConfig).anthropicRouting,
+  }
 }
 
 /**

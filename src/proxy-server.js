@@ -115,6 +115,15 @@ function normalizeRequestedModel(modelId) {
   return trimmed.replace(/^fcm-proxy\//, '')
 }
 
+function normalizeAnthropicRouting(anthropicRouting = null) {
+  return {
+    model: normalizeRequestedModel(anthropicRouting?.model),
+    modelOpus: normalizeRequestedModel(anthropicRouting?.modelOpus),
+    modelSonnet: normalizeRequestedModel(anthropicRouting?.modelSonnet),
+    modelHaiku: normalizeRequestedModel(anthropicRouting?.modelHaiku),
+  }
+}
+
 function classifyClaudeVirtualModel(modelId) {
   const normalized = normalizeRequestedModel(modelId)
   if (!normalized) return null
@@ -133,6 +142,22 @@ function classifyClaudeVirtualModel(modelId) {
   if (lower.includes('haiku')) return 'haiku'
   if (lower.includes('sonnet')) return 'sonnet'
   return null
+}
+
+function resolveAnthropicMappedModel(modelId, anthropicRouting) {
+  const routing = normalizeAnthropicRouting(anthropicRouting)
+  const fallbackModel = routing.model
+  if (!fallbackModel && !routing.modelOpus && !routing.modelSonnet && !routing.modelHaiku) {
+    return null
+  }
+
+  const family = classifyClaudeVirtualModel(modelId)
+  if (family === 'opus') return routing.modelOpus || fallbackModel
+  if (family === 'sonnet') return routing.modelSonnet || fallbackModel
+  if (family === 'haiku') return routing.modelHaiku || fallbackModel
+
+  // 📖 free-claude-code falls back to MODEL for unknown Claude ids too.
+  return fallbackModel
 }
 
 function parseProxyAuthorizationHeader(authorization, expectedToken) {
@@ -160,6 +185,7 @@ export class ProxyServer {
  *   accounts?: Array<{ id: string, providerKey: string, apiKey: string, modelId: string, url: string }>,
  *   retries?: number,
  *   proxyApiKey?: string,
+ *   anthropicRouting?: { model?: string|null, modelOpus?: string|null, modelSonnet?: string|null, modelHaiku?: string|null },
  *   accountManagerOpts?: object,
  *   tokenStatsOpts?: object,
  *   thinkingConfig?: { mode: string, budget_tokens?: number },
@@ -172,6 +198,7 @@ export class ProxyServer {
     accounts = [],
     retries = 3,
     proxyApiKey = null,
+    anthropicRouting = null,
     accountManagerOpts = {},
     tokenStatsOpts = {},
     thinkingConfig,
@@ -183,6 +210,7 @@ export class ProxyServer {
     this._thinkingConfig = thinkingConfig
     this._compressionOpts = compressionOpts
     this._proxyApiKey = proxyApiKey
+    this._anthropicRouting = normalizeAnthropicRouting(anthropicRouting)
     this._accounts = accounts
     this._upstreamTimeoutMs = upstreamTimeoutMs
     // 📖 Progressive backoff delays (ms) for retries — first attempt is immediate,
@@ -236,6 +264,7 @@ export class ProxyServer {
       port: this._listeningPort,
       accountCount: this._accounts.length,
       healthByAccount: this._accountManager.getAllHealth(),
+      anthropicRouting: this._anthropicRouting,
     }
   }
 
@@ -253,13 +282,17 @@ export class ProxyServer {
       return requestedModel
     }
 
+    const mappedModel = resolveAnthropicMappedModel(requestedModel, this._anthropicRouting)
+    if (mappedModel && this._accountManager.hasAccountsForModel(mappedModel)) {
+      return mappedModel
+    }
+
     // 📖 Claude Code still emits internal aliases / tier model ids for some
-    // 📖 background and helper paths. When the launcher encoded the selected
-    // 📖 proxy slug into the auth token, remap those virtual Claude ids here.
-    // 📖 This intentionally matches Claude families by substring so ids like
-    // 📖 `claude-3-5-sonnet-20241022` behave the same as `sonnet`.
+    // 📖 background and helper paths. Keep the old auth-token hint as a final
+    // 📖 compatibility fallback for already-launched sessions, but the primary
+    // 📖 routing path is now the free-claude-code style proxy-side mapping above.
     if (authModelHint && this._accountManager.hasAccountsForModel(authModelHint)) {
-      if (!requestedModel || classifyClaudeVirtualModel(requestedModel)) {
+      if (!requestedModel || classifyClaudeVirtualModel(requestedModel) || requestedModel.toLowerCase().startsWith('claude-')) {
         return authModelHint
       }
     }
@@ -783,6 +816,7 @@ export class ProxyServer {
         byModel: summary.byModel || {},
         recentRequests: summary.recentRequests || [],
       },
+      anthropicRouting: this._anthropicRouting,
       totals: {
         requests: totalRequests,
         tokens: totalTokens,
@@ -1390,9 +1424,11 @@ export class ProxyServer {
    * 📖 In-flight requests on old accounts will finish naturally.
    *
    * @param {Array} accounts — new account list
+   * @param {{ model?: string|null, modelOpus?: string|null, modelSonnet?: string|null, modelHaiku?: string|null }} anthropicRouting
    */
-  updateAccounts(accounts) {
+  updateAccounts(accounts, anthropicRouting = this._anthropicRouting) {
     this._accounts = accounts
+    this._anthropicRouting = normalizeAnthropicRouting(anthropicRouting)
     this._accountManager = new AccountManager(accounts, {})
   }
 }

@@ -19,22 +19,24 @@
  *   📖 Crush: writes crush.json with provider config + models.large/small defaults
  *   📖 Pi: uses --provider/--model CLI flags for guaranteed auto-selection
  *   📖 Aider: writes ~/.aider.conf.yml + passes --model flag
- *   📖 Claude Code: uses ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN only (mirrors free-claude-code)
+ *   📖 Claude Code: mirrors free-claude-code by keeping fake Claude model ids on the client,
+ *      forcing a valid Claude alias at launch, and moving MODEL / MODEL_OPUS / MODEL_SONNET /
+ *      MODEL_HAIKU routing into the proxy
  *   📖 Codex CLI: uses a custom model_provider override so Codex stays in explicit API-provider mode
  *   📖 Gemini CLI: proxy mode is capability-gated because older builds do not support custom base URL routing cleanly
  *
  * @functions
  *   → `resolveLauncherModelId` — choose the provider-specific id or proxy slug for a launch
- *   → `applyClaudeCodeModelOverrides` — force Claude Code auxiliary model slots onto the chosen proxy model
- *   → `buildClaudeProxyAuthToken` — encode the proxy token + selected model hint for Claude-only fallback routing
+ *   → `waitForClaudeProxyRouting` — wait until the daemon/proxy has reloaded the free-claude-code style Claude-family mapping
+ *   → `buildClaudeProxyArgs` — force a valid Claude alias so stale local non-Claude selections cannot break launch
  *   → `buildCodexProxyArgs` — force Codex into a proxy-backed custom provider config
  *   → `inspectGeminiCliSupport` — detect whether the installed Gemini CLI can use proxy mode safely
  *   → `writeGooseConfig` — install provider + set GOOSE_PROVIDER/GOOSE_MODEL in config.yaml
  *   → `writeCrushConfig` — write provider + models.large/small to crush.json
  *   → `startExternalTool` — configure and launch the selected external tool mode
  *
- * @exports resolveLauncherModelId, applyClaudeCodeModelOverrides, buildClaudeProxyAuthToken
- * @exports buildCodexProxyArgs, inspectGeminiCliSupport, startExternalTool
+ * @exports resolveLauncherModelId, waitForClaudeProxyRouting, buildClaudeProxyArgs, buildCodexProxyArgs
+ * @exports inspectGeminiCliSupport, startExternalTool
  *
  * @see src/tool-metadata.js
  * @see src/provider-metadata.js
@@ -48,7 +50,7 @@ import { delimiter, dirname, join } from 'path'
 import { spawn, spawnSync } from 'child_process'
 import { sources } from '../sources.js'
 import { PROVIDER_COLOR } from './render-table.js'
-import { getApiKey, getProxySettings } from './config.js'
+import { getApiKey, getProxySettings, saveConfig, setClaudeProxyModelRouting } from './config.js'
 import { ENV_VAR_NAMES, isWindows } from './provider-metadata.js'
 import { getToolMeta } from './tool-metadata.js'
 import { ensureProxyRunning, resolveProxyModelId } from './opencode.js'
@@ -83,6 +85,9 @@ const GEMINI_ENV_KEYS = [
 const PROXY_SANITIZED_ENV_KEYS = [...OPENAI_COMPAT_ENV_KEYS, ...ANTHROPIC_ENV_KEYS, ...GEMINI_ENV_KEYS]
 const GEMINI_PROXY_MIN_VERSION = '0.34.0'
 const EXPERIMENTAL_PROXY_TOOLS_NOTE = 'FCM Proxy V2 support for external tools is still in beta, so some launch and authentication flows can remain flaky while the integration stabilizes.'
+const CLAUDE_PROXY_RELOAD_TIMEOUT_MS = 4000
+const CLAUDE_PROXY_RELOAD_INTERVAL_MS = 200
+const CLAUDE_PROXY_CLIENT_MODEL = 'sonnet'
 
 function ensureDir(filePath) {
   const dir = dirname(filePath)
@@ -154,26 +159,15 @@ export function resolveLauncherModelId(model, useProxy = false) {
   return model?.modelId ?? ''
 }
 
-export function applyClaudeCodeModelOverrides(env, modelId) {
-  const resolvedModelId = typeof modelId === 'string' ? modelId.trim() : ''
-  if (!resolvedModelId) return env
-
-  // 📖 Claude Code still uses auxiliary model slots (opus/sonnet/haiku/subagents)
-  // 📖 even when a custom primary model is selected. Pin them all to the same slug.
-  env.ANTHROPIC_MODEL = resolvedModelId
-  env.ANTHROPIC_DEFAULT_OPUS_MODEL = resolvedModelId
-  env.ANTHROPIC_DEFAULT_SONNET_MODEL = resolvedModelId
-  env.ANTHROPIC_DEFAULT_HAIKU_MODEL = resolvedModelId
-  env.ANTHROPIC_SMALL_FAST_MODEL = resolvedModelId
-  env.CLAUDE_CODE_SUBAGENT_MODEL = resolvedModelId
-  return env
-}
-
-export function buildClaudeProxyAuthToken(proxyToken, modelId) {
-  const resolvedProxyToken = typeof proxyToken === 'string' ? proxyToken.trim() : ''
-  const resolvedModelId = typeof modelId === 'string' ? modelId.trim() : ''
-  if (!resolvedProxyToken) return ''
-  return resolvedModelId ? `${resolvedProxyToken}:${resolvedModelId}` : resolvedProxyToken
+/**
+ * 📖 Force Claude Code to start on a real Claude alias, never on an FCM slug.
+ * 📖 Older FCM launches poisoned Claude's local model state with `gpt-oss-*`,
+ * 📖 and Claude rejects those client-side before any proxy request is made.
+ *
+ * @returns {string[]}
+ */
+export function buildClaudeProxyArgs() {
+  return ['--model', CLAUDE_PROXY_CLIENT_MODEL]
 }
 
 export function buildToolEnv(mode, model, config, options = {}) {
@@ -186,7 +180,7 @@ export function buildToolEnv(mode, model, config, options = {}) {
   const providerKey = model.providerKey
   const providerUrl = sources[providerKey]?.url || ''
   const baseUrl = getProviderBaseUrl(providerKey)
-  const apiKey = getApiKey(config, providerKey)
+  const apiKey = sanitize ? (config?.apiKeys?.[providerKey] ?? null) : getApiKey(config, providerKey)
   const env = cloneInheritedEnv(inheritedEnv, sanitize ? PROXY_SANITIZED_ENV_KEYS : [])
   const providerEnvName = ENV_VAR_NAMES[providerKey]
   if (includeProviderEnv && providerEnvName && apiKey) env[providerEnvName] = apiKey
@@ -206,7 +200,6 @@ export function buildToolEnv(mode, model, config, options = {}) {
   if (mode === 'claude-code' && apiKey && baseUrl) {
     env.ANTHROPIC_AUTH_TOKEN = apiKey
     env.ANTHROPIC_BASE_URL = baseUrl
-    env.ANTHROPIC_MODEL = model.modelId
   }
 
   if (mode === 'gemini' && apiKey && baseUrl) {
@@ -216,6 +209,31 @@ export function buildToolEnv(mode, model, config, options = {}) {
   }
 
   return { env, apiKey, baseUrl, providerUrl }
+}
+
+export async function waitForClaudeProxyRouting(port, token, expectedModelId) {
+  const expected = typeof expectedModelId === 'string' ? expectedModelId.trim().replace(/^fcm-proxy\//, '') : ''
+  if (!expected || !port || !token) return false
+
+  const deadline = Date.now() + CLAUDE_PROXY_RELOAD_TIMEOUT_MS
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/v1/stats`, {
+        headers: { authorization: `Bearer ${token}` },
+      })
+      if (res.ok) {
+        const payload = await res.json()
+        const active = payload?.anthropicRouting?.model
+        if (typeof active === 'string' && active.replace(/^fcm-proxy\//, '') === expected) {
+          return true
+        }
+      }
+    } catch { /* daemon may still be reloading — keep polling */ }
+
+    await new Promise(resolve => setTimeout(resolve, CLAUDE_PROXY_RELOAD_INTERVAL_MS))
+  }
+
+  return false
 }
 
 export function buildCodexProxyArgs(baseUrl) {
@@ -608,9 +626,8 @@ export async function startExternalTool(mode, model, config) {
     return spawnCommand('goose', [], env)
   }
 
-  // 📖 Claude Code, Codex, and Gemini require the FCM Proxy V2 background service.
-  // 📖 Without it, these tools cannot connect to the free providers (protocol mismatch / no direct support).
-  if (mode === 'claude-code' || mode === 'codex' || mode === 'gemini') {
+  // 📖 Codex and Gemini require FCM Proxy V2 to talk to the free-provider mesh.
+  if (mode === 'codex' || mode === 'gemini') {
     if (!proxySettings.enabled) {
       console.log()
       console.log(chalk.red(`  ✖ ${meta.label} requires FCM Proxy V2 to work with free providers.`))
@@ -629,21 +646,46 @@ export async function startExternalTool(mode, model, config) {
   }
 
   if (mode === 'claude-code') {
-    // 📖 Claude Code needs Anthropic-compatible wire format (POST /v1/messages).
-    // 📖 Mirror free-claude-code: one auth env only (`ANTHROPIC_AUTH_TOKEN`) plus base URL.
-    const started = await ensureProxyRunning(config)
+    // 📖 Mirror free-claude-code exactly on the client side:
+    // 📖 Claude gets only ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN, and the
+    // 📖 proxy owns the fake Claude model ids -> real backend model mapping.
+    const launchModelId = resolveLauncherModelId(model, true)
+    const routingChanged = setClaudeProxyModelRouting(config, launchModelId)
+    if (routingChanged) {
+      const saveResult = saveConfig(config)
+      if (!saveResult.success) {
+        console.log()
+        console.log(chalk.red('  ✖ Failed to persist the Claude proxy routing before launch.'))
+        console.log(chalk.dim(`  ${saveResult.error || 'Unknown config write error.'}`))
+        console.log()
+        return 1
+      }
+    }
+
+    const started = await ensureProxyRunning(config, { forceRestart: true })
     const { env: proxyEnv } = buildToolEnv(mode, model, config, {
       sanitize: true,
       includeCompatDefaults: false,
       includeProviderEnv: false,
     })
     const proxyBase = `http://127.0.0.1:${started.port}`
-    const launchModelId = resolveLauncherModelId(model, true)
+    const claudeProxyToken = `${started.proxyToken}:${launchModelId}`
     proxyEnv.ANTHROPIC_BASE_URL = proxyBase
-    proxyEnv.ANTHROPIC_AUTH_TOKEN = buildClaudeProxyAuthToken(started.proxyToken, launchModelId)
-    applyClaudeCodeModelOverrides(proxyEnv, launchModelId)
-    console.log(chalk.dim(`  📖 Claude Code routed through FCM proxy on :${started.port} (Anthropic translation enabled)`))
-    return spawnCommand('claude', ['--model', launchModelId], proxyEnv)
+    proxyEnv.ANTHROPIC_AUTH_TOKEN = claudeProxyToken
+
+    const routingReady = await waitForClaudeProxyRouting(started.port, started.proxyToken, launchModelId)
+    if (!routingReady) {
+      console.log(chalk.yellow(`  ⚠ Claude proxy routing reload is taking longer than expected; launching anyway.`))
+      console.log(chalk.dim(`  ${EXPERIMENTAL_PROXY_TOOLS_NOTE}`))
+    }
+
+    if (routingChanged && proxySettings.enabled !== true) {
+      console.log(chalk.dim('  📖 Proxy mode was auto-enabled for Claude Code because this integration is proxy-only.'))
+    }
+    console.log(chalk.dim(`  📖 Claude Code routed through FCM proxy on :${started.port} with proxy-side Claude model mapping`))
+    console.log(chalk.dim(`  📖 Claude itself is forced onto the safe alias: ${CLAUDE_PROXY_CLIENT_MODEL}`))
+    console.log(chalk.dim(`  📖 All Claude families now resolve to: ${model.label} (${launchModelId})`))
+    return spawnCommand('claude', buildClaudeProxyArgs(), proxyEnv)
   }
 
   if (mode === 'codex') {

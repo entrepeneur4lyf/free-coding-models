@@ -40,7 +40,8 @@ import {
 } from '../src/utils.js'
 import {
   _emptyProfileSettings, saveAsProfile, loadProfile, listProfiles,
-  deleteProfile, getActiveProfileName, setActiveProfile, getProxySettings, normalizeProxySettings, normalizeEndpointInstalls, getApiKey
+  deleteProfile, getActiveProfileName, setActiveProfile, getProxySettings,
+  normalizeProxySettings, normalizeEndpointInstalls, getApiKey, setClaudeProxyModelRouting
 } from '../src/config.js'
 import { buildProviderModelTokenKey, loadTokenUsageByProviderModel, formatTokenTotalCompact } from '../src/token-usage-reader.js'
 import { renderTable } from '../src/render-table.js'
@@ -51,8 +52,7 @@ import { setOpenCodeModelData } from '../src/opencode.js'
 import { resolveProxySyncToolMode } from '../src/proxy-sync.js'
 import { buildCliHelpText } from '../src/cli-help.js'
 import {
-  applyClaudeCodeModelOverrides,
-  buildClaudeProxyAuthToken,
+  buildClaudeProxyArgs,
   buildCodexProxyArgs,
   buildToolEnv,
   extractGeminiConfigError,
@@ -1616,6 +1616,12 @@ describe('config profile functions', () => {
     assert.equal(defaults.preferredPort, 0)
     assert.equal(defaults.daemonEnabled, false)
     assert.equal(defaults.daemonConsent, null)
+    assert.deepEqual(defaults.anthropicRouting, {
+      model: null,
+      modelOpus: null,
+      modelSonnet: null,
+      modelHaiku: null,
+    })
     // 📖 stableToken is auto-generated if missing — just verify it exists and has the right prefix
     assert.ok(typeof defaults.stableToken === 'string' && defaults.stableToken.startsWith('fcm_'))
 
@@ -1623,13 +1629,45 @@ describe('config profile functions', () => {
     assert.equal(fromEmpty.enabled, false)
     assert.equal(fromEmpty.syncToOpenCode, false)
     assert.equal(fromEmpty.preferredPort, 0)
+    assert.equal(fromEmpty.anthropicRouting.model, null)
     assert.ok(fromEmpty.stableToken.startsWith('fcm_'))
 
-    const explicit = getProxySettings({ settings: { proxy: { enabled: true, syncToOpenCode: true, preferredPort: 8123, stableToken: 'fcm_mytoken' } } })
+    const explicit = getProxySettings({
+      settings: {
+        proxy: {
+          enabled: true,
+          syncToOpenCode: true,
+          preferredPort: 8123,
+          stableToken: 'fcm_mytoken',
+          anthropicRouting: {
+            model: 'gpt-oss-120b',
+            modelOpus: 'gpt-oss-120b',
+            modelSonnet: 'gpt-oss-120b',
+            modelHaiku: 'gpt-oss-120b',
+          },
+        },
+      },
+    })
     assert.equal(explicit.enabled, true)
     assert.equal(explicit.syncToOpenCode, true)
     assert.equal(explicit.preferredPort, 8123)
     assert.equal(explicit.stableToken, 'fcm_mytoken')
+    assert.equal(explicit.anthropicRouting.modelSonnet, 'gpt-oss-120b')
+  })
+
+  it('pins free-claude-code style MODEL and MODEL_* routing to one selected proxy model', () => {
+    const config = { settings: {} }
+    const changed = setClaudeProxyModelRouting(config, 'fcm-proxy/gpt-oss-120b')
+    const proxySettings = getProxySettings(config)
+
+    assert.equal(changed, true)
+    assert.equal(proxySettings.enabled, true)
+    assert.deepEqual(proxySettings.anthropicRouting, {
+      model: 'gpt-oss-120b',
+      modelOpus: 'gpt-oss-120b',
+      modelSonnet: 'gpt-oss-120b',
+      modelHaiku: 'gpt-oss-120b',
+    })
   })
 
   it('defaults configured-only mode and preferred tool mode in profile settings', () => {
@@ -1809,25 +1847,9 @@ describe('tool launcher env building', () => {
 
     assert.equal(env.ANTHROPIC_API_KEY, undefined)
     assert.equal(env.ANTHROPIC_AUTH_TOKEN, 'nvapi-test')
+    assert.equal(env.ANTHROPIC_MODEL, undefined)
     assert.equal(env.OPENAI_API_KEY, undefined)
     assert.equal(env.OPENAI_BASE_URL, undefined)
-  })
-
-  it('pins Claude helper model slots to the selected proxy model', () => {
-    const env = {}
-    applyClaudeCodeModelOverrides(env, 'gpt-oss-120b')
-
-    assert.equal(env.ANTHROPIC_MODEL, 'gpt-oss-120b')
-    assert.equal(env.ANTHROPIC_DEFAULT_OPUS_MODEL, 'gpt-oss-120b')
-    assert.equal(env.ANTHROPIC_DEFAULT_SONNET_MODEL, 'gpt-oss-120b')
-    assert.equal(env.ANTHROPIC_DEFAULT_HAIKU_MODEL, 'gpt-oss-120b')
-    assert.equal(env.ANTHROPIC_SMALL_FAST_MODEL, 'gpt-oss-120b')
-    assert.equal(env.CLAUDE_CODE_SUBAGENT_MODEL, 'gpt-oss-120b')
-  })
-
-  it('encodes the Claude proxy auth token with the selected model hint', () => {
-    assert.equal(buildClaudeProxyAuthToken('fcm_secret', 'gpt-oss-120b'), 'fcm_secret:gpt-oss-120b')
-    assert.equal(buildClaudeProxyAuthToken('fcm_secret', ''), 'fcm_secret')
   })
 
   it('builds explicit custom-provider args for Codex proxy launches', () => {
@@ -1837,6 +1859,10 @@ describe('tool launcher env building', () => {
     assert.match(joined, /model_providers\.fcm_proxy\.env_key="FCM_PROXY_API_KEY"/)
     assert.match(joined, /model_providers\.fcm_proxy\.wire_api="responses"/)
     assert.match(joined, /127\.0\.0\.1:18045\/v1/)
+  })
+
+  it('forces Claude proxy launches onto a real Claude alias instead of an FCM slug', () => {
+    assert.deepEqual(buildClaudeProxyArgs(), ['--model', 'sonnet'])
   })
 
   it('extracts Gemini config validation errors from CLI output', () => {
@@ -1856,6 +1882,7 @@ describe('tool launcher env building', () => {
 describe('proxy sync target resolution', () => {
   it('follows the current tool mode instead of a stored activeTool selector', () => {
     assert.equal(resolveProxySyncToolMode('opencode-desktop'), 'opencode')
+    assert.equal(resolveProxySyncToolMode('claude-code'), null)
     assert.equal(resolveProxySyncToolMode('codex'), 'codex')
     assert.equal(resolveProxySyncToolMode('gemini'), null)
   })

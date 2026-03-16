@@ -100,12 +100,13 @@
  *   → setActiveProfile(config, name) — Set which profile is active (null to clear)
  *   → _emptyProfileSettings() — Default TUI settings for a profile
  *   → getProxySettings(config) — Return normalized proxy settings from config
+ *   → setClaudeProxyModelRouting(config, modelId) — Mirror free-claude-code MODEL/MODEL_* routing onto one selected FCM model
  *   → normalizeEndpointInstalls(endpointInstalls) — Keep tracked endpoint installs stable across app versions
  *
  * @exports loadConfig, saveConfig, validateConfigFile, getApiKey, isProviderEnabled
  * @exports addApiKey, removeApiKey, listApiKeys — multi-key management helpers
  * @exports saveAsProfile, loadProfile, listProfiles, deleteProfile
- * @exports getActiveProfileName, setActiveProfile, getProxySettings, normalizeEndpointInstalls
+ * @exports getActiveProfileName, setActiveProfile, getProxySettings, setClaudeProxyModelRouting, normalizeEndpointInstalls
  * @exports CONFIG_PATH — path to the JSON config file
  *
  * @see bin/free-coding-models.js — main CLI that uses these functions
@@ -645,6 +646,24 @@ export function _emptyProfileSettings() {
     hideUnconfiguredModels: true, // 📖 true = default to providers that are actually configured
     preferredToolMode: 'opencode', // 📖 remember the last Z-selected launcher across app restarts
     proxy: normalizeProxySettings(),
+    disableWidthsWarning: false, // 📖 Disable widths warning (default off)
+  }
+}
+
+function normalizeAnthropicRouting(anthropicRouting = null) {
+  const normalizeModelId = (value) => {
+    if (typeof value !== 'string') return null
+    const trimmed = value.trim().replace(/^fcm-proxy\//, '')
+    return trimmed || null
+  }
+
+  return {
+    // 📖 Mirror free-claude-code naming: MODEL is the fallback, and MODEL_* are
+    // 📖 Claude-family overrides. FCM currently pins all four to one selected model.
+    model: normalizeModelId(anthropicRouting?.model),
+    modelOpus: normalizeModelId(anthropicRouting?.modelOpus),
+    modelSonnet: normalizeModelId(anthropicRouting?.modelSonnet),
+    modelHaiku: normalizeModelId(anthropicRouting?.modelHaiku),
   }
 }
 
@@ -658,7 +677,7 @@ export function _emptyProfileSettings() {
  * 📖 daemonConsent — ISO timestamp of when user consented to daemon install, or null.
  *
  * @param {object|undefined|null} proxy
- * @returns {{ enabled: boolean, syncToOpenCode: boolean, preferredPort: number, stableToken: string, daemonEnabled: boolean, daemonConsent: string|null }}
+ * @returns {{ enabled: boolean, syncToOpenCode: boolean, preferredPort: number, stableToken: string, daemonEnabled: boolean, daemonConsent: string|null, anthropicRouting: { model: string|null, modelOpus: string|null, modelSonnet: string|null, modelHaiku: string|null } }}
  */
 export function normalizeProxySettings(proxy = null) {
   const preferredPort = Number.isInteger(proxy?.preferredPort) && proxy.preferredPort >= 0 && proxy.preferredPort <= 65535
@@ -679,6 +698,7 @@ export function normalizeProxySettings(proxy = null) {
     daemonConsent: (typeof proxy?.daemonConsent === 'string' && proxy.daemonConsent.length > 0)
       ? proxy.daemonConsent
       : null,
+    anthropicRouting: normalizeAnthropicRouting(proxy?.anthropicRouting),
     // 📖 activeTool — legacy field kept only for backward compatibility.
     // 📖 Runtime sync now follows the current Z-selected tool automatically.
     activeTool: (typeof proxy?.activeTool === 'string' && proxy.activeTool.length > 0)
@@ -696,6 +716,44 @@ export function normalizeProxySettings(proxy = null) {
  */
 export function getProxySettings(config) {
   return normalizeProxySettings(config?.settings?.proxy)
+}
+
+/**
+ * 📖 Persist the free-claude-code style MODEL / MODEL_OPUS / MODEL_SONNET /
+ * 📖 MODEL_HAIKU routing onto one selected proxy model. Claude Code itself then
+ * 📖 keeps speaking in fake Claude model ids while the proxy chooses the backend.
+ *
+ * @param {object} config
+ * @param {string} modelId
+ * @returns {boolean} true when the normalized proxy settings changed
+ */
+export function setClaudeProxyModelRouting(config, modelId) {
+  const normalizedModelId = typeof modelId === 'string' ? modelId.trim().replace(/^fcm-proxy\//, '') : ''
+  if (!normalizedModelId) return false
+
+  if (!config.settings || typeof config.settings !== 'object') config.settings = {}
+
+  const current = getProxySettings(config)
+  const nextAnthropicRouting = {
+    model: normalizedModelId,
+    modelOpus: normalizedModelId,
+    modelSonnet: normalizedModelId,
+    modelHaiku: normalizedModelId,
+  }
+
+  const changed = current.enabled !== true
+    || current.anthropicRouting.model !== nextAnthropicRouting.model
+    || current.anthropicRouting.modelOpus !== nextAnthropicRouting.modelOpus
+    || current.anthropicRouting.modelSonnet !== nextAnthropicRouting.modelSonnet
+    || current.anthropicRouting.modelHaiku !== nextAnthropicRouting.modelHaiku
+
+  config.settings.proxy = {
+    ...current,
+    enabled: true,
+    anthropicRouting: nextAnthropicRouting,
+  }
+
+  return changed
 }
 
 /**
@@ -852,6 +910,7 @@ function _emptyConfig() {
     settings: {
       hideUnconfiguredModels: true,
       proxy: normalizeProxySettings(),
+      disableWidthsWarning: false, // 📖 Disable widths warning toggle (default off)
     },
     // 📖 Pinned favorites rendered at top of the table ("providerKey/modelId").
     favorites: [],

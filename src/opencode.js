@@ -575,25 +575,25 @@ export async function ensureProxyRunning(fcmConfig, { forceRestart = false } = {
     throw new Error('Proxy mode is disabled in Settings')
   }
 
-  // 📖 Phase 1: Check if background daemon is running — delegate instead of starting in-process
-  if (!forceRestart) {
-    try {
-      const daemonRunning = await isDaemonRunning()
-      if (daemonRunning) {
-        const info = getDaemonInfo()
-        if (info) {
-          return {
-            port: info.port,
-            accountCount: info.accountCount || 0,
-            proxyToken: info.token,
-            proxyModels: null,
-            availableModelSlugs: new Set(), // 📖 daemon handles model discovery
-            isDaemon: true,
-          }
+  // 📖 Always prefer the background daemon when it is available. Launcher code
+  // 📖 can update config and let the daemon hot-reload, which is closer to the
+  // 📖 free-claude-code model than spinning up tool-specific local proxies.
+  try {
+    const daemonRunning = await isDaemonRunning()
+    if (daemonRunning) {
+      const info = getDaemonInfo()
+      if (info) {
+        return {
+          port: info.port,
+          accountCount: info.accountCount || 0,
+          proxyToken: info.token,
+          proxyModels: null,
+          availableModelSlugs: new Set(), // 📖 daemon handles model discovery
+          isDaemon: true,
         }
       }
-    } catch { /* daemon check failed — fall through to in-process */ }
-  }
+    }
+  } catch { /* daemon check failed — fall through to in-process */ }
 
   if (forceRestart && activeProxy) {
     await cleanupProxy()
@@ -613,7 +613,7 @@ export async function ensureProxyRunning(fcmConfig, { forceRestart = false } = {
     }
   }
 
-  const { accounts, proxyModels } = buildProxyTopologyFromConfig(fcmConfig)
+  const { accounts, proxyModels, anthropicRouting } = buildProxyTopologyFromConfig(fcmConfig)
   if (accounts.length === 0) {
     throw new Error('No API keys found for proxy-capable models')
   }
@@ -622,7 +622,7 @@ export async function ensureProxyRunning(fcmConfig, { forceRestart = false } = {
   const proxySettings = getProxySettings(fcmConfig)
   const proxyToken = proxySettings.stableToken || `fcm_${randomUUID().replace(/-/g, '')}`
   const preferredPort = Number.isInteger(proxySettings.preferredPort) ? proxySettings.preferredPort : 0
-  const proxy = new ProxyServer({ port: preferredPort, accounts, proxyApiKey: proxyToken })
+  const proxy = new ProxyServer({ port: preferredPort, accounts, proxyApiKey: proxyToken, anthropicRouting })
   const { port } = await proxy.start()
   activeProxy = proxy
   setActiveProxy(activeProxy)

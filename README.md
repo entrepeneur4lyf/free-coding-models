@@ -182,12 +182,13 @@ bunx free-coding-models YOUR_API_KEY
 
 ### 🆕 What's New
 
-**Version 0.3.2 hardens the Claude Code proxy path to match the routing strategy that works in `free-claude-code`:**
+**Version 0.3.3 switches Claude Code to the exact `free-claude-code` pattern instead of injecting FCM slugs into Claude itself:**
 
-- **Claude Code family-model routing is now proxy-side** — FCM remaps Claude's internal family ids such as `claude-3-5-sonnet-*`, `claude-3-haiku-*`, `claude-3-opus-*`, `sonnet`, `haiku`, and `default` back to the selected FCM proxy model.
-- **Claude Code helper model slots are pinned** — FCM now exports the selected model into `ANTHROPIC_MODEL`, `ANTHROPIC_DEFAULT_OPUS_MODEL`, `ANTHROPIC_DEFAULT_SONNET_MODEL`, `ANTHROPIC_DEFAULT_HAIKU_MODEL`, and `CLAUDE_CODE_SUBAGENT_MODEL` so background/helper requests stop drifting.
-- **Claude proxy auth now carries the selected model hint** — The launcher encodes the chosen proxy model into `ANTHROPIC_AUTH_TOKEN`, giving the proxy a reliable fallback even when Claude Code ignores the visible `/model` selection.
-- **Proxy support remains beta** — External-tool proxy support is still stabilizing, but Claude Code should now behave much closer to the working `free-claude-code` setup.
+- **Claude Code is proxy-only now** — FCM no longer tries to make Claude Code “select” `gpt-oss-120b` or any other free model directly. Claude still speaks in Claude model ids, and the proxy picks the real backend.
+- **Proxy-side `MODEL` / `MODEL_OPUS` / `MODEL_SONNET` / `MODEL_HAIKU` routing now drives Claude** — When you launch Claude Code from a selected FCM row, FCM writes the selected proxy slug into the proxy's Anthropic routing config, exactly like `free-claude-code`, then lets the daemon hot-reload it.
+- **Claude no longer gets `--model <fcm-slug>` or `ANTHROPIC_MODEL=<fcm-slug>`** — the launcher now passes only `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN`, which is the same clean client-side contract used by `free-claude-code`.
+- **Claude is now forced onto a real Claude alias at launch** — FCM starts Claude Code with `--model sonnet`, so stale local values like `gpt-oss-120b` cannot fail client-side before the proxy even receives the request.
+- **Claude sync/install leftovers were removed from the proxy path** — Claude Code is no longer treated like a persisted-config target for proxy sync; its integration is runtime-only, with fake Claude ids resolved by the proxy.
 
 ---
 
@@ -686,7 +687,7 @@ Press **Z** to cycle through all 13 tool modes in the TUI, or use flags to start
 
 Proxy-backed external tool support is still beta. Expect occasional launch/auth rough edges while third-party CLI contracts are still settling.
 
-`Codex` is launched through an explicit custom provider config so it stays in API-key mode through the proxy. `Gemini` proxy launches are version-gated: older builds like `0.33.0` are blocked with a clear diagnostic instead of being misconfigured silently.
+`Claude Code` is launched with a real Claude alias (`--model sonnet`) while the proxy maps that fake Claude family back to your selected FCM backend, which avoids stale local `gpt-oss-*` selections breaking before the proxy is hit. `Codex` is launched through an explicit custom provider config so it stays in API-key mode through the proxy. `Gemini` proxy launches are version-gated: older builds like `0.33.0` are blocked with a clear diagnostic instead of being misconfigured silently.
 
 The **Install Endpoints** flow (`Y` key) now targets only the tools with a stable persisted config contract. `Claude Code`, `Codex`, and `Gemini` stay launcher-only and should be started directly from FCM.
 

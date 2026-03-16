@@ -93,7 +93,7 @@ export function setActiveProxy(proxyInstance) {
 }
 
 // ─── renderTable: mode param controls footer hint text (opencode vs openclaw) ─────────
-export function renderTable(results, pendingPings, frame, cursor = null, sortColumn = 'avg', sortDirection = 'asc', pingInterval = PING_INTERVAL, lastPingTime = Date.now(), mode = 'opencode', tierFilterMode = 0, scrollOffset = 0, terminalRows = 0, terminalCols = 0, originFilterMode = 0, activeProfile = null, profileSaveMode = false, profileSaveBuffer = '', proxyStartupStatus = null, pingMode = 'normal', pingModeSource = 'auto', hideUnconfiguredModels = false, widthWarningStartedAt = null, widthWarningDismissed = false, widthWarningShowCount = 0, settingsUpdateState = 'idle', settingsUpdateLatestVersion = null, proxyEnabled = false, startupLatestVersion = null, versionAlertsEnabled = true) {
+export function renderTable(results, pendingPings, frame, cursor = null, sortColumn = 'avg', sortDirection = 'asc', pingInterval = PING_INTERVAL, lastPingTime = Date.now(), mode = 'opencode', tierFilterMode = 0, scrollOffset = 0, terminalRows = 0, terminalCols = 0, originFilterMode = 0, activeProfile = null, profileSaveMode = false, profileSaveBuffer = '', proxyStartupStatus = null, pingMode = 'normal', pingModeSource = 'auto', hideUnconfiguredModels = false, widthWarningStartedAt = null, widthWarningDismissed = false, widthWarningShowCount = 0, settingsUpdateState = 'idle', settingsUpdateLatestVersion = null, proxyEnabled = false, startupLatestVersion = null, versionAlertsEnabled = true, disableWidthsWarning = false) {
   // 📖 Filter out hidden models for display
   const visibleResults = results.filter(r => !r.hidden)
 
@@ -192,12 +192,12 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
   const W_STAB = 11
   const W_UPTIME = 6
   const W_TOKENS = 7
-  const W_USAGE = 7
+  // const W_USAGE = 7 // Usage column removed
   const MIN_TABLE_WIDTH = 166
   const warningDurationMs = 4_000
   const elapsed = widthWarningStartedAt ? Math.max(0, Date.now() - widthWarningStartedAt) : warningDurationMs
   const remainingMs = Math.max(0, warningDurationMs - elapsed)
-  const showWidthWarning = terminalCols > 0 && terminalCols < MIN_TABLE_WIDTH && !widthWarningDismissed && widthWarningShowCount < 2 && remainingMs > 0
+  const showWidthWarning = terminalCols > 0 && terminalCols < MIN_TABLE_WIDTH && !disableWidthsWarning && !widthWarningDismissed && widthWarningShowCount < 2 && remainingMs > 0
 
   if (showWidthWarning) {
     const lines = []
@@ -216,6 +216,10 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
     lines.push(' '.repeat(padLeft3) + chalk.red(warning3))
     lines.push('')
     lines.push(' '.repeat(Math.max(0, Math.floor((terminalCols - 34) / 2))) + chalk.yellow(`this message will hide in ${(remainingMs / 1000).toFixed(1)}s`))
+    const barTotal = Math.max(0, Math.min(terminalCols - 4, 30))
+    const barFill = Math.round((elapsed / warningDurationMs) * barTotal)
+    const barStr = chalk.green('█'.repeat(barFill)) + chalk.dim('░'.repeat(barTotal - barFill))
+    lines.push(' '.repeat(Math.max(0, Math.floor((terminalCols - barTotal) / 2))) + barStr)
     lines.push(' '.repeat(Math.max(0, Math.floor((terminalCols - 20) / 2))) + chalk.dim('press esc to dismiss'))
     while (terminalRows > 0 && lines.length < terminalRows) lines.push('')
     const EL = '\x1b[K'
@@ -297,17 +301,11 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
     return chalk.yellow.bold('U') + chalk.dim('p%' + padding)
   })()
   const tokensH_c  = chalk.dim(tokensH.padEnd(W_TOKENS))
-  // 📖 Usage sorts on plain G, so the highlighted letter must stay in the visible header.
-  const usageH_c   = sortColumn === 'usage' ? chalk.bold.cyan(usageH.padEnd(W_USAGE)) : (() => {
-    const plain = 'UsaGe'
-    const padding = ' '.repeat(Math.max(0, W_USAGE - plain.length))
-    return chalk.dim('Usa') + chalk.yellow.bold('G') + chalk.dim('e' + padding)
-  })()
+  // 📖 Usage column removed from UI – no header or separator for it.
+  // Header without Usage column (column order: Rank, Tier, SWE%, CTX, Model, Provider, Latest Ping, Avg Ping, Health, Verdict, Stability, Up%, Used)
+  lines.push('  ' + rankH_c + '  ' + tierH_c + '  ' + sweH_c + '  ' + ctxH_c + '  ' + modelH_c + '  ' + originH_c + '  ' + pingH_c + '  ' + avgH_c + '  ' + healthH_c + '  ' + verdictH_c + '  ' + stabH_c + '  ' + uptimeH_c + '  ' + tokensH_c)
 
-  // 📖 Header with proper spacing (column order: Rank, Tier, SWE%, CTX, Model, Provider, Latest Ping, Avg Ping, Health, Verdict, Stability, Up%, Used, Usage)
-  lines.push('  ' + rankH_c + '  ' + tierH_c + '  ' + sweH_c + '  ' + ctxH_c + '  ' + modelH_c + '  ' + originH_c + '  ' + pingH_c + '  ' + avgH_c + '  ' + healthH_c + '  ' + verdictH_c + '  ' + stabH_c + '  ' + uptimeH_c + '  ' + tokensH_c + '  ' + usageH_c)
-
-  // 📖 Separator line
+  // Separator line without Usage column
   lines.push(
     '  ' +
     chalk.dim('─'.repeat(W_RANK)) + '  ' +
@@ -322,8 +320,7 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
     chalk.dim('─'.repeat(W_VERDICT)) + '  ' +
     chalk.dim('─'.repeat(W_STAB)) + '  ' +
     chalk.dim('─'.repeat(W_UPTIME)) + '  ' +
-    chalk.dim('─'.repeat(W_TOKENS)) + '  ' +
-    chalk.dim('─'.repeat(W_USAGE))
+    chalk.dim('─'.repeat(W_TOKENS))
   )
 
   if (sorted.length === 0) {
@@ -563,26 +560,9 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
     const sourceCursorText = providerName.padEnd(W_SOURCE)
     const sourceCell = isCursor ? chalk.rgb(...providerRgb).bold(sourceCursorText) : source
 
-    // 📖 Usage column — provider-scoped remaining quota when measurable,
-    // 📖 otherwise a green dot to show "usable but not meaningfully quantifiable".
-    let usageCell
-    if (r.usagePercent !== undefined && r.usagePercent !== null) {
-      const usageStr = Math.round(r.usagePercent) + '%'
-      if (r.usagePercent >= 80) {
-        usageCell = chalk.greenBright(usageStr.padEnd(W_USAGE))
-      } else if (r.usagePercent >= 50) {
-        usageCell = chalk.yellow(usageStr.padEnd(W_USAGE))
-      } else if (r.usagePercent >= 20) {
-        usageCell = chalk.rgb(255, 165, 0)(usageStr.padEnd(W_USAGE)) // orange
-      } else {
-        usageCell = chalk.red(usageStr.padEnd(W_USAGE))
-      }
-    } else {
-      const usagePlaceholder = usagePlaceholderForProvider(r.providerKey)
-      usageCell = usagePlaceholder === '🟢'
-        ? chalk.greenBright(usagePlaceholder.padEnd(W_USAGE))
-        : chalk.dim(usagePlaceholder.padEnd(W_USAGE))
-    }
+    // 📖 Usage column removed from UI – no usage data displayed.
+    // (We keep the logic but do not render it.)
+    const usageCell = ''
 
     // 📖 Used column — total historical prompt+completion tokens consumed for this
     // 📖 exact provider/model pair, loaded once from request-log.jsonl at startup.
@@ -591,8 +571,8 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
       ? chalk.rgb(120, 210, 255)(formatTokenTotalCompact(tokenTotal).padEnd(W_TOKENS))
       : chalk.dim('0'.padEnd(W_TOKENS))
 
-    // 📖 Build row with double space between columns (order: Rank, Tier, SWE%, CTX, Model, Provider, Latest Ping, Avg Ping, Health, Verdict, Stability, Up%, Used, Usage)
-    const row = '  ' + num + '  ' + tier + '  ' + sweCell + '  ' + ctxCell + '  ' + nameCell + '  ' + sourceCell + '  ' + pingCell + '  ' + avgCell + '  ' + status + '  ' + speedCell + '  ' + stabCell + '  ' + uptimeCell + '  ' + tokensCell + '  ' + usageCell
+    // 📖 Build row with double space between columns (order: Rank, Tier, SWE%, CTX, Model, Provider, Latest Ping, Avg Ping, Health, Verdict, Stability, Up%, Used)
+    const row = '  ' + num + '  ' + tier + '  ' + sweCell + '  ' + ctxCell + '  ' + nameCell + '  ' + sourceCell + '  ' + pingCell + '  ' + avgCell + '  ' + status + '  ' + speedCell + '  ' + stabCell + '  ' + uptimeCell + '  ' + tokensCell
 
     if (isCursor) {
       lines.push(chalk.bgRgb(155, 55, 135)(row))

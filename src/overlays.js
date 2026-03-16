@@ -145,9 +145,10 @@ export function createOverlayRenderers(state, deps) {
   // 📖 Key "T" in settings = test API key for selected provider.
   function renderSettings() {
     const providerKeys = Object.keys(sources)
-    const updateRowIdx = providerKeys.length
-    const proxyDaemonRowIdx = updateRowIdx + 1
-    const changelogViewRowIdx = updateRowIdx + 2
+const updateRowIdx = providerKeys.length
+      const widthWarningRowIdx = updateRowIdx + 1
+      const proxyDaemonRowIdx = widthWarningRowIdx + 1
+      const changelogViewRowIdx = proxyDaemonRowIdx + 1
     const proxySettings = getProxySettings(state.config)
     const EL = '\x1b[K'
     const lines = []
@@ -274,6 +275,13 @@ export function createOverlayRenderers(state, deps) {
     const updateRow = `${updateBullet}${chalk.bold(updateActionLabel).padEnd(44)} ${updateStatus}`
     cursorLineByRow[updateRowIdx] = lines.length
     lines.push(updateCursor ? chalk.bgRgb(30, 30, 60)(updateRow) : updateRow)
+    // 📖 Widths Warning toggle row (disable widths warning)
+    const disableWidthsWarning = Boolean(state.config.settings?.disableWidthsWarning)
+    const widthWarningBullet = state.settingsCursor === widthWarningRowIdx ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
+    const widthWarningStatus = disableWidthsWarning ? chalk.greenBright('DISABLED') : chalk.dim('enabled')
+    const widthWarningRow = `${widthWarningBullet}${chalk.bold('Disable Widths Warning').padEnd(44)} ${widthWarningStatus}`
+    cursorLineByRow[widthWarningRowIdx] = lines.length
+    lines.push(state.settingsCursor === widthWarningRowIdx ? chalk.bgRgb(30, 30, 60)(widthWarningRow) : widthWarningRow)
     if (updateState === 'error' && state.settingsUpdateError) {
       lines.push(chalk.red(`      ${state.settingsUpdateError}`))
     }
@@ -304,8 +312,8 @@ export function createOverlayRenderers(state, deps) {
 
     // 📖 Profiles section — list saved profiles with active indicator + delete support
     const savedProfiles = listProfiles(state.config)
-    const profileStartIdx = updateRowIdx + 3
-    const maxRowIdx = savedProfiles.length > 0 ? profileStartIdx + savedProfiles.length - 1 : updateRowIdx
+const profileStartIdx = updateRowIdx + 5
+      const maxRowIdx = savedProfiles.length > 0 ? profileStartIdx + savedProfiles.length - 1 : changelogViewRowIdx
 
     lines.push('')
     lines.push(`  ${chalk.bold('📋 Profiles')}  ${chalk.dim(savedProfiles.length > 0 ? `(${savedProfiles.length} saved)` : '(none — press Shift+S in main view to save)')}`)
@@ -612,8 +620,7 @@ export function createOverlayRenderers(state, deps) {
     lines.push(`  ${chalk.cyan('Used')}        Total prompt+completion tokens consumed in logs for this exact provider/model pair`)
     lines.push(`              ${chalk.dim('Loaded once at startup from request-log.jsonl. Displayed in K tokens, or M tokens above one million.')}`)
     lines.push('')
-    lines.push(`  ${chalk.cyan('Usage')}       Remaining quota for this exact provider when quota telemetry is exposed  ${chalk.dim('Sort:')} ${chalk.yellow('G')}`)
-    lines.push(`              ${chalk.dim('If a provider does not expose a trustworthy remaining %, the table shows a green dot instead of a fake number.')}`)
+
 
     lines.push('')
     lines.push(`  ${chalk.bold('Main TUI')}`)

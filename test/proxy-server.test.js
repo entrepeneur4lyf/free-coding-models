@@ -680,6 +680,138 @@ describe('ProxyServer – compatibility routes', () => {
     assert.ok(body.input_tokens > 0)
   })
 
+  it('POST /v1/messages mirrors free-claude-code proxy-side MODEL/MODEL_* routing', async () => {
+    let capturedUpstreamModel = null
+    const upstream = await new Promise((resolve) => {
+      const server = http.createServer((req, res) => {
+        let body = ''
+        req.on('data', chunk => body += chunk)
+        req.on('end', () => {
+          capturedUpstreamModel = JSON.parse(body).model
+          res.writeHead(200, { 'content-type': 'application/json' })
+          res.end(JSON.stringify({
+            id: 'chatcmpl_claude_mapped',
+            model: 'provider-model',
+            choices: [{ message: { content: 'mapped ok' } }],
+            usage: { prompt_tokens: 4, completion_tokens: 3 },
+          }))
+        })
+      })
+      server.listen(0, '127.0.0.1', () => {
+        resolve({ server, url: `http://127.0.0.1:${server.address().port}` })
+      })
+    })
+    cleanups.push(() => upstream.server.close())
+
+    const proxy = new ProxyServer({
+      port: 0,
+      accounts: [{
+        id: 'claude-routed-acct',
+        providerKey: 'test',
+        apiKey: 'key-1',
+        modelId: 'provider-model',
+        proxyModelId: 'gpt-oss-120b',
+        url: upstream.url + '/v1',
+      }],
+      proxyApiKey: 'secret-key',
+      anthropicRouting: {
+        model: 'gpt-oss-120b',
+        modelOpus: 'gpt-oss-120b',
+        modelSonnet: 'gpt-oss-120b',
+        modelHaiku: 'gpt-oss-120b',
+      },
+    })
+    const { port } = await proxy.start()
+    cleanups.push(() => proxy.stop())
+
+    const res = await makeRequest(
+      port,
+      {
+        model: 'claude-3-5-sonnet-20241022',
+        max_tokens: 256,
+        messages: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }],
+      },
+      'POST',
+      '/v1/messages',
+      { authorization: 'Bearer secret-key' },
+    )
+
+    assert.strictEqual(res.statusCode, 200)
+    const body = JSON.parse(res.body)
+    assert.equal(body.type, 'message')
+    assert.match(body.content[0].text, /mapped ok/i)
+    assert.equal(capturedUpstreamModel, 'provider-model')
+  })
+
+  it('POST /v1/messages falls back to proxy-side MODEL for unknown Claude model ids', async () => {
+    const capturedUpstreamModels = []
+    const upstream = await new Promise((resolve) => {
+      const server = http.createServer((req, res) => {
+        let body = ''
+        req.on('data', chunk => body += chunk)
+        req.on('end', () => {
+          capturedUpstreamModels.push(JSON.parse(body).model)
+          res.writeHead(200, { 'content-type': 'application/json' })
+          res.end(JSON.stringify({
+            id: 'chatcmpl_claude_fallback_model',
+            model: 'provider-model',
+            choices: [{ message: { content: 'fallback model ok' } }],
+            usage: { prompt_tokens: 2, completion_tokens: 1 },
+          }))
+        })
+      })
+      server.listen(0, '127.0.0.1', () => {
+        resolve({ server, url: `http://127.0.0.1:${server.address().port}` })
+      })
+    })
+    cleanups.push(() => upstream.server.close())
+
+    const proxy = new ProxyServer({
+      port: 0,
+      accounts: [{
+        id: 'claude-model-fallback-acct',
+        providerKey: 'test',
+        apiKey: 'key-1',
+        modelId: 'provider-model',
+        proxyModelId: 'gpt-oss-120b',
+        url: upstream.url + '/v1',
+      }],
+      proxyApiKey: 'secret-key',
+      anthropicRouting: {
+        model: 'gpt-oss-120b',
+        modelOpus: null,
+        modelSonnet: null,
+        modelHaiku: null,
+      },
+    })
+    const { port } = await proxy.start()
+    cleanups.push(() => proxy.stop())
+
+    for (const requestedModel of ['claude-2.1', 'some-unknown-model']) {
+      const res = await makeRequest(
+        port,
+        {
+          model: requestedModel,
+          max_tokens: 128,
+          messages: [{ role: 'user', content: [{ type: 'text', text: requestedModel }] }],
+        },
+        'POST',
+        '/v1/messages',
+        { authorization: 'Bearer secret-key' },
+      )
+
+      assert.strictEqual(res.statusCode, 200)
+      const body = JSON.parse(res.body)
+      assert.equal(body.type, 'message')
+      assert.match(body.content[0].text, /fallback model ok/i)
+    }
+
+    assert.deepEqual(
+      capturedUpstreamModels,
+      ['provider-model', 'provider-model'],
+    )
+  })
+
   it('POST /v1/messages remaps Claude internal model ids to the auth-token-selected proxy model', async () => {
     let capturedUpstreamModel = null
     const upstream = await new Promise((resolve) => {

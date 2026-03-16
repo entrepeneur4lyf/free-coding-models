@@ -959,13 +959,14 @@ export function createKeyHandler(ctx) {
     if (state.settingsOpen) {
       const proxySettings = getProxySettings(state.config)
       const providerKeys = Object.keys(sources)
-      const updateRowIdx = providerKeys.length
-      const proxyDaemonRowIdx = updateRowIdx + 1
-      const changelogViewRowIdx = updateRowIdx + 2
-      // 📖 Profile rows start after maintenance + proxy/daemon + changelog
-      const savedProfiles = listProfiles(state.config)
-      const profileStartIdx = updateRowIdx + 3
-      const maxRowIdx = savedProfiles.length > 0 ? profileStartIdx + savedProfiles.length - 1 : changelogViewRowIdx
+const updateRowIdx = providerKeys.length
+       const widthWarningRowIdx = updateRowIdx + 1
+       const proxyDaemonRowIdx = widthWarningRowIdx + 1
+       const changelogViewRowIdx = proxyDaemonRowIdx + 1
+       // 📖 Profile rows start after maintenance + width warning + proxy/daemon + changelog
+       const savedProfiles = listProfiles(state.config)
+       const profileStartIdx = updateRowIdx + 5
+       const maxRowIdx = savedProfiles.length > 0 ? profileStartIdx + savedProfiles.length - 1 : changelogViewRowIdx
 
       // 📖 Edit/Add-key mode: capture typed characters for the API key
       if (state.settingsEditMode || state.settingsAddKeyMode) {
@@ -1098,6 +1099,14 @@ export function createKeyHandler(ctx) {
           return
         }
 
+        // 📖 Widths Warning toggle (Enter to toggle)
+        if (state.settingsCursor === widthWarningRowIdx) {
+          if (!state.config.settings) state.config.settings = {}
+          state.config.settings.disableWidthsWarning = !state.config.settings.disableWidthsWarning
+          saveConfig(state.config)
+          return
+        }
+
         // 📖 Proxy & Daemon row: Enter → open dedicated overlay
         if (state.settingsCursor === proxyDaemonRowIdx) {
           state.settingsOpen = false
@@ -1161,7 +1170,15 @@ export function createKeyHandler(ctx) {
       }
 
       if (key.name === 'space') {
+        // 📖 Exclude certain rows from space toggle
         if (state.settingsCursor === updateRowIdx || state.settingsCursor === proxyDaemonRowIdx || state.settingsCursor === changelogViewRowIdx) return
+        // 📖 Widths Warning toggle (disable/enable)
+        if (state.settingsCursor === widthWarningRowIdx) {
+          if (!state.config.settings) state.config.settings = {}
+          state.config.settings.disableWidthsWarning = !state.config.settings.disableWidthsWarning
+          saveConfig(state.config)
+          return
+        }
         // 📖 Profile rows don't respond to Space
         if (state.settingsCursor >= profileStartIdx) return
 
@@ -1204,7 +1221,7 @@ export function createKeyHandler(ctx) {
           saveConfig(state.config)
           // 📖 Re-clamp cursor after deletion (profile list just got shorter)
           const newProfiles = listProfiles(state.config)
-          const newMaxRowIdx = newProfiles.length > 0 ? profileStartIdx + newProfiles.length - 1 : updateRowIdx
+          const newMaxRowIdx = newProfiles.length > 0 ? profileStartIdx + newProfiles.length - 1 : changelogViewRowIdx
           if (state.settingsCursor > newMaxRowIdx) {
             state.settingsCursor = Math.max(0, newMaxRowIdx)
           }
@@ -1715,7 +1732,7 @@ export function createKeyHandler(ctx) {
     // 📖 Shift+R is reserved for reset view settings
     const sortKeys = {
       'r': 'rank', 'o': 'origin', 'm': 'model',
-      'l': 'ping', 'a': 'avg', 's': 'swe', 'c': 'ctx', 'h': 'condition', 'v': 'verdict', 'b': 'stability', 'u': 'uptime', 'g': 'usage'
+      'l': 'ping', 'a': 'avg', 's': 'swe', 'c': 'ctx', 'h': 'condition', 'v': 'verdict', 'b': 'stability', 'u': 'uptime'
     }
 
     if (sortKeys[key.name] && !key.ctrl && !key.shift) {

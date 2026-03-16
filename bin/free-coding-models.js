@@ -484,11 +484,12 @@ async function main() {
     mode,                         // 📖 'opencode' or 'openclaw' — controls Enter action
     tierFilterMode: 0,            // 📖 Index into TIER_CYCLE (0=All, 1=S+, 2=S, ...)
     originFilterMode: 0,          // 📖 Index into ORIGIN_CYCLE (0=All, then providers)
-    hideUnconfiguredModels: startupProfileSettings?.hideUnconfiguredModels === true || config.settings?.hideUnconfiguredModels === true, // 📖 Hide providers with no configured API key when true.
-    scrollOffset: 0,              // 📖 First visible model index in viewport
-    terminalRows: process.stdout.rows || 24,  // 📖 Current terminal height
-    terminalCols: process.stdout.columns || 80, // 📖 Current terminal width
-    widthWarningStartedAt: (process.stdout.columns || 80) < 166 ? now : null, // 📖 Start the narrow-terminal countdown immediately when booting in a small viewport.
+hideUnconfiguredModels: startupProfileSettings?.hideUnconfiguredModels === true || config.settings?.hideUnconfiguredModels === true, // 📖 Hide providers with no configured API key when true.
+      disableWidthsWarning: config.settings?.disableWidthsWarning ?? false, // 📖 Disable widths warning toggle (default off)
+      scrollOffset: 0,              // 📖 First visible model index in viewport
+      terminalRows: process.stdout.rows || 24,  // 📖 Current terminal height
+      terminalCols: process.stdout.columns || 80, // 📖 Current terminal width
+      widthWarningStartedAt: (process.stdout.columns || 80) < 166 ? now : null, // 📖 Start the narrow-terminal countdown immediately when booting in a small viewport.
     widthWarningDismissed: false, // 📖 Esc hides the narrow-terminal warning early for the current narrow-width session.
     widthWarningShowCount: 0, // 📖 Counter for how many times the narrow-terminal warning has been shown (max 2 per session).
     // 📖 Settings screen state (P key opens it)
@@ -575,7 +576,7 @@ async function main() {
     const prevCols = state.terminalCols
     state.terminalRows = process.stdout.rows || 24
     state.terminalCols = process.stdout.columns || 80
-    if (state.terminalCols < 166) {
+    if (state.terminalCols < 166 && !state.disableWidthsWarning) {
       if (prevCols >= 166 || state.widthWarningDismissed) {
         state.widthWarningStartedAt = Date.now()
         state.widthWarningDismissed = false

@@ -531,11 +531,9 @@ function installIntoEnvBasedTool(providerKey, models, apiKey, toolMode, paths, c
       const proxyBase = effectiveBaseUrl.replace(/\/v1$/, '')
       envLines.push(`export ANTHROPIC_AUTH_TOKEN="${effectiveApiKey}"`)
       envLines.push(`export ANTHROPIC_BASE_URL="${proxyBase}"`)
-      envLines.push(`export ANTHROPIC_MODEL="${effectiveModelId}"`)
     } else {
       envLines.push(`export ANTHROPIC_AUTH_TOKEN="${effectiveApiKey}"`)
       envLines.push(`export ANTHROPIC_BASE_URL="${effectiveBaseUrl}"`)
-      envLines.push(`export ANTHROPIC_MODEL="${effectiveModelId}"`)
     }
   }
 

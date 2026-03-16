@@ -88,7 +88,7 @@ async function main() {
   const { sources } = await import('../sources.js')
 
   // 📖 Load config and build initial topology — wrapped in try/catch to provide clear error on startup failures
-  let fcmConfig, proxySettings, mergedModels, accounts, proxyModels
+  let fcmConfig, proxySettings, mergedModels, accounts, proxyModels, anthropicRouting
   try {
     fcmConfig = loadConfig()
     proxySettings = getProxySettings(fcmConfig)
@@ -113,6 +113,7 @@ async function main() {
     const topology = buildProxyTopologyFromConfig(fcmConfig, mergedModels, sources)
     accounts = topology.accounts
     proxyModels = topology.proxyModels
+    anthropicRouting = topology.anthropicRouting
   } catch (err) {
     logError(`Fatal: Failed to build initial topology: ${err.message}`)
     process.exit(1)
@@ -130,6 +131,7 @@ async function main() {
     port,
     accounts,
     proxyApiKey: token,
+    anthropicRouting,
   })
 
   try {
@@ -175,9 +177,10 @@ async function main() {
             return
           }
 
-          proxy.updateAccounts(newTopology.accounts)
+          proxy.updateAccounts(newTopology.accounts, newTopology.anthropicRouting)
           accounts = newTopology.accounts
           proxyModels = newTopology.proxyModels
+          anthropicRouting = newTopology.anthropicRouting
 
           // 📖 Update status file
           writeDaemonStatus({
