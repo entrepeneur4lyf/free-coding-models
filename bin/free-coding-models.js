@@ -88,6 +88,7 @@
 
 import chalk from 'chalk'
 import { createRequire } from 'module'
+import { fileURLToPath } from 'url'
 import { readFileSync, writeFileSync, existsSync, copyFileSync, mkdirSync } from 'fs'
 import { randomUUID } from 'crypto'
 import { homedir } from 'os'
@@ -336,26 +337,51 @@ async function main() {
     ts: new Date().toISOString(),
   })
 
-  // 📖 Check for updates in the background (non-blocking, non-forced)
-  // 📖 The old auto-update on startup caused infinite loops, so we've moved to:
-  // 📖 1. Optional prompt when a new version is available (user chooses to update or not)
-  // 📖 2. Display "OUTDATED" in TUI footer if update check fails repeatedly
+  // 📖 Auto-update detection: check npm registry for new versions at startup.
+  // 📖 If a new version is available, show an interactive prompt (Update / Changelogs / Skip).
+  // 📖 Dev mode (git checkout) skips auto-update to avoid infinite relaunch loops.
   let latestVersion = null
   let isOutdated = false
+  const isDevMode = existsSync(join(dirname(fileURLToPath(import.meta.url)), '..', '.git'))
   try {
     latestVersion = await checkForUpdate()
-    // 📖 Track update check failures - if it fails 3+ times, mark as outdated
     if (!latestVersion && config.settings?.updateCheckFailures >= 3) {
       isOutdated = true
     }
+    // 📖 Reset failure counter on successful check
+    if (config.settings?.updateCheckFailures) {
+      config.settings.updateCheckFailures = 0
+      saveConfig(config)
+    }
   } catch (err) {
-    // 📖 Silently fail - don't block the app if npm registry is unreachable
-    // 📖 But track the failure for outdated detection
     const failures = (config.settings?.updateCheckFailures || 0) + 1
     if (!config.settings) config.settings = {}
     config.settings.updateCheckFailures = Math.min(failures, 3)
     if (failures >= 3) isOutdated = true
     saveConfig(config)
+  }
+
+  // 📖 Show interactive update prompt if a new version is available (skip in dev mode)
+  if (latestVersion && !isDevMode) {
+    const choice = await promptUpdateNotification(latestVersion)
+    if (choice === 'update') {
+      runUpdate(latestVersion)
+      return // 📖 runUpdate relaunches the process — this line is a safety guard
+    } else if (choice === 'changelogs') {
+      const { execSync: _exec } = await import('child_process')
+      const url = 'https://github.com/vava-nessa/free-coding-models/releases'
+      try {
+        if (process.platform === 'darwin') _exec(`open ${url}`)
+        else if (process.platform === 'linux') _exec(`xdg-open ${url}`)
+        else console.log(chalk.dim(`  📋 ${url}`))
+      } catch { console.log(chalk.dim(`  📋 ${url}`)) }
+      // 📖 After opening changelogs, re-prompt so user can still update or continue
+      const choice2 = await promptUpdateNotification(latestVersion)
+      if (choice2 === 'update') {
+        runUpdate(latestVersion)
+        return
+      }
+    }
   }
 
   // 📖 Dynamic OpenRouter free model discovery — fetch live free models from API
