@@ -4,6 +4,9 @@
 
 ## 0.3.15
 
+### Added
+- **GLM-4.7-Flash and GLM-4.5-Flash models**: Added ZAI's free coding models GLM-4.7-Flash and GLM-4.5-Flash to the ZAI provider. Both models are rated S tier with 59.2% SWE-bench scores and are completely free with unlimited API access.
+
 ### Changed
 - Added vertical column separators (gentle dark orange) for clearer column separation and removed the horizontal separator line in the main TUI.
 

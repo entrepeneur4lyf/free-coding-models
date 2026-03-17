@@ -54,9 +54,15 @@ const ACTIVE_FILTER_BG_BY_TIER = {
   'C': [186, 104, 200],
 }
 
-// 📖 Vertical separator for columns – gentle dark orange
-const VERTICAL_SEPARATOR = chalk.rgb(255, 140, 0).dim('│');
-const COL_SEP = ` ${VERTICAL_SEPARATOR} `;
+// 📖 Import UI configuration for consistent styling
+import { VERTICAL_SEPARATOR, COLUMN_SPACING } from './ui-config.js';
+
+// 📖 Column separator (vertical bar) is now defined in ui-config.js
+// const VERTICAL_SEPARATOR = chalk.rgb(255, 140, 0).dim('│');
+// const COL_SEP = ` ${VERTICAL_SEPARATOR} `; // Replaced by imported COLUMN_SPACING
+
+// 📖 Column spacing is now defined in ui-config.js
+const COL_SEP = COLUMN_SPACING;
 
 const require = createRequire(import.meta.url)
 const { version: LOCAL_VERSION } = require('../package.json')
