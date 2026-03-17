@@ -126,6 +126,7 @@ import { getConfiguredInstallableProviders, installProviderEndpoints, refreshIns
 import { loadCache, saveCache, clearCache, getCacheAge } from '../src/cache.js'
 import { checkConfigSecurity } from '../src/security.js'
 import { buildCliHelpText } from '../src/cli-help.js'
+import { detectActiveTheme } from '../src/theme.js'
 
 // 📖 mergedModels: cross-provider grouped model list (one entry per label, N providers each)
 // 📖 mergedModelByLabel: fast lookup map from display label → merged model entry
@@ -174,7 +175,8 @@ const LOCAL_VERSION = pkg.version
 
 export async function runApp(cliArgs, config) {
 
-
+  // 📖 Detect user active terminal theme
+  detectActiveTheme(config.settings?.theme || 'dark')
 
   // 📖 Check config file security — warn and offer auto-fix if permissions are too open
   const securityCheck = checkConfigSecurity()

@@ -2,6 +2,16 @@
 
 ---
 
+## 0.3.17
+
+### Added
+- **Auto Light/Dark Theme**: Implemented automatic detection of the user's terminal theme (dark or light) so that the TUI is always readable. Added semantic color tokens, and users can override the theme as `dark`, `light`, or `auto` via the Settings interface.
+
+## 0.3.16
+
+### Added
+- **iFlow free coding models**: Added the iFlow provider to the README and TUI, supporting `deepseek-v3`, `mini-max-m2.5`, etc.
+
 ## 0.3.15
 
 ### Added

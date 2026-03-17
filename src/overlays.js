@@ -22,6 +22,7 @@
 
 import { loadChangelog } from './changelog-loader.js'
 import { buildCliHelpLines } from './cli-help.js'
+import { themeColors } from './theme.js'
 
 export function createOverlayRenderers(state, deps) {
   const {
@@ -34,9 +35,6 @@ export function createOverlayRenderers(state, deps) {
     resolveApiKeys,
     isProviderEnabled,
     TIER_CYCLE,
-    SETTINGS_OVERLAY_BG,
-    HELP_OVERLAY_BG,
-    RECOMMEND_OVERLAY_BG,
     OVERLAY_PANEL_WIDTH,
     keepOverlayTargetVisible,
     sliceOverlayLines,
@@ -163,7 +161,7 @@ export function createOverlayRenderers(state, deps) {
 
       const row = `${bullet}[ ${enabledBadge} ] ${providerName}  ${keyDisplay.padEnd(30)}  ${testBadge}  ${rateSummary}`
       cursorLineByRow[i] = lines.length
-      lines.push(isCursor ? chalk.bgRgb(30, 30, 60)(row) : row)
+      lines.push(isCursor ? themeColors.bgCursor(row) : row)
     }
 
     lines.push('')
@@ -216,7 +214,7 @@ export function createOverlayRenderers(state, deps) {
     if (updateState === 'installing') updateStatus = chalk.cyan('Installing update…')
     const updateRow = `${updateBullet}${chalk.bold(updateActionLabel).padEnd(44)} ${updateStatus}`
     cursorLineByRow[updateRowIdx] = lines.length
-    lines.push(updateCursor ? chalk.bgRgb(30, 30, 60)(updateRow) : updateRow)
+    lines.push(updateCursor ? themeColors.bgCursor(updateRow) : updateRow)
     // 📖 Width warning visibility row for the startup narrow-terminal overlay.
     const disableWidthsWarning = Boolean(state.config.settings?.disableWidthsWarning)
     const widthWarningBullet = state.settingsCursor === widthWarningRowIdx ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
@@ -225,7 +223,7 @@ export function createOverlayRenderers(state, deps) {
       : chalk.greenBright('👁 Enabled')
     const widthWarningRow = `${widthWarningBullet}${chalk.bold('Small Width Warnings').padEnd(44)} ${widthWarningStatus}`
     cursorLineByRow[widthWarningRowIdx] = lines.length
-    lines.push(state.settingsCursor === widthWarningRowIdx ? chalk.bgRgb(30, 30, 60)(widthWarningRow) : widthWarningRow)
+    lines.push(state.settingsCursor === widthWarningRowIdx ? themeColors.bgCursor(widthWarningRow) : widthWarningRow)
     if (updateState === 'error' && state.settingsUpdateError) {
       lines.push(chalk.red(`      ${state.settingsUpdateError}`))
     }
@@ -234,13 +232,13 @@ export function createOverlayRenderers(state, deps) {
     const cleanupLegacyProxyBullet = state.settingsCursor === cleanupLegacyProxyRowIdx ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
     const cleanupLegacyProxyRow = `${cleanupLegacyProxyBullet}${chalk.bold('Clean Legacy Proxy Config').padEnd(44)} ${chalk.magentaBright('Enter remove discontinued bridge leftovers')}`
     cursorLineByRow[cleanupLegacyProxyRowIdx] = lines.length
-    lines.push(state.settingsCursor === cleanupLegacyProxyRowIdx ? chalk.bgRgb(55, 25, 55)(cleanupLegacyProxyRow) : cleanupLegacyProxyRow)
+    lines.push(state.settingsCursor === cleanupLegacyProxyRowIdx ? themeColors.bgCursorLegacy(cleanupLegacyProxyRow) : cleanupLegacyProxyRow)
 
     // 📖 Changelog viewer row
     const changelogViewBullet = state.settingsCursor === changelogViewRowIdx ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
     const changelogViewRow = `${changelogViewBullet}${chalk.bold('View Changelog').padEnd(44)} ${chalk.dim('Enter browse version history')}`
     cursorLineByRow[changelogViewRowIdx] = lines.length
-    lines.push(state.settingsCursor === changelogViewRowIdx ? chalk.bgRgb(30, 45, 30)(changelogViewRow) : changelogViewRow)
+    lines.push(state.settingsCursor === changelogViewRowIdx ? themeColors.bgCursorSettingsList(changelogViewRow) : changelogViewRow)
 
     // 📖 Profile system removed - API keys now persist permanently across all sessions
 
@@ -280,7 +278,7 @@ export function createOverlayRenderers(state, deps) {
     const { visible, offset } = sliceOverlayLines(lines, state.settingsScrollOffset, state.terminalRows)
     state.settingsScrollOffset = offset
 
-    const tintedLines = tintOverlayLines(visible, SETTINGS_OVERLAY_BG, state.terminalCols)
+    const tintedLines = tintOverlayLines(visible, themeColors.overlayBgSettings, state.terminalCols)
     const cleared = tintedLines.map(l => l + EL)
     return cleared.join('\n')
   }
@@ -347,7 +345,7 @@ export function createOverlayRenderers(state, deps) {
           const bullet = isCursor ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
           const row = `${bullet}${chalk.bold(provider.label.padEnd(24))} ${chalk.dim(`${provider.modelCount} models`)}`
           cursorLineByRow[idx] = lines.length
-          lines.push(isCursor ? chalk.bgRgb(24, 44, 62)(row) : row)
+          lines.push(isCursor ? themeColors.bgCursorInstall(row) : row)
         })
       }
 
@@ -371,7 +369,7 @@ export function createOverlayRenderers(state, deps) {
         const bullet = isCursor ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
         const row = `${bullet}${chalk.bold(label.padEnd(26))} ${note}`
         cursorLineByRow[idx] = lines.length
-        lines.push(isCursor ? chalk.bgRgb(24, 44, 62)(row) : row)
+        lines.push(isCursor ? themeColors.bgCursorInstall(row) : row)
       })
 
       lines.push('')
@@ -386,7 +384,7 @@ export function createOverlayRenderers(state, deps) {
         const bullet = isCursor ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
         const row = `${bullet}${chalk.bold(scope.label)}`
         cursorLineByRow[idx] = lines.length
-        lines.push(isCursor ? chalk.bgRgb(24, 44, 62)(row) : row)
+        lines.push(isCursor ? themeColors.bgCursorInstall(row) : row)
         lines.push(chalk.dim(`      ${scope.hint}`))
         lines.push('')
       })
@@ -409,7 +407,7 @@ export function createOverlayRenderers(state, deps) {
         const tier = chalk.cyan(model.tier.padEnd(2))
         const row = `${bullet}${checkbox} ${chalk.bold(model.label.padEnd(26))} ${tier} ${chalk.dim(model.ctx.padEnd(6))} ${chalk.dim(model.modelId)}`
         cursorLineByRow[idx] = lines.length
-        lines.push(isCursor ? chalk.bgRgb(24, 44, 62)(row) : row)
+        lines.push(isCursor ? themeColors.bgCursorInstall(row) : row)
       })
 
       lines.push('')
@@ -443,7 +441,7 @@ export function createOverlayRenderers(state, deps) {
     const { visible, offset } = sliceOverlayLines(lines, state.installEndpointsScrollOffset, state.terminalRows)
     state.installEndpointsScrollOffset = offset
 
-    const tintedLines = tintOverlayLines(visible, SETTINGS_OVERLAY_BG, state.terminalCols)
+    const tintedLines = tintOverlayLines(visible, themeColors.overlayBgSettings, state.terminalCols)
     const cleared = tintedLines.map((line) => line + EL)
     return cleared.join('\n')
   }
@@ -539,7 +537,7 @@ export function createOverlayRenderers(state, deps) {
     // 📖 Help overlay can be longer than viewport, so keep a dedicated scroll offset.
     const { visible, offset } = sliceOverlayLines(lines, state.helpScrollOffset, state.terminalRows)
     state.helpScrollOffset = offset
-    const tintedLines = tintOverlayLines(visible, HELP_OVERLAY_BG, state.terminalCols)
+    const tintedLines = tintOverlayLines(visible, themeColors.overlayBgHelp, state.terminalCols)
     const cleared = tintedLines.map(l => l + EL)
     return cleared.join('\n')
   }
@@ -605,7 +603,7 @@ export function createOverlayRenderers(state, deps) {
         const opt = q.options[i]
         const isCursor = i === state.recommendCursor
         const bullet = isCursor ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
-        const label = isCursor ? chalk.bold.white(opt.label) : chalk.white(opt.label)
+        const label = isCursor ? themeColors.textBold(opt.label) : themeColors.text(opt.label)
         lines.push(`${bullet}${label}`)
       }
 
@@ -666,9 +664,9 @@ export function createOverlayRenderers(state, deps) {
           const stabStr = stability === -1 ? '—' : String(stability)
 
           const isCursor = i === state.recommendCursor
-          const highlight = isCursor ? chalk.bgRgb(20, 50, 25) : (s => s)
+          const highlight = isCursor ? themeColors.bgCursor : (s => s)
 
-          lines.push(highlight(`  ${medal} ${chalk.bold('#' + (i + 1))}  ${chalk.bold.white(r.label)}  ${chalk.dim('(' + providerName + ')')}`))
+          lines.push(highlight(`  ${medal} ${chalk.bold('#' + (i + 1))}  ${themeColors.textBold(r.label)}  ${chalk.dim('(' + providerName + ')')}`))
           lines.push(highlight(`       Score: ${chalk.bold.greenBright(String(rec.score) + '/100')}  │  Tier: ${tierFn(r.tier)}  │  SWE: ${chalk.cyan(sweStr)}  │  Avg: ${chalk.yellow(avgStr)}  │  CTX: ${chalk.cyan(ctxStr)}  │  Stability: ${chalk.cyan(stabStr)}`))
           lines.push('')
         }
@@ -683,7 +681,7 @@ export function createOverlayRenderers(state, deps) {
     lines.push('')
     const { visible, offset } = sliceOverlayLines(lines, state.recommendScrollOffset, state.terminalRows)
     state.recommendScrollOffset = offset
-    const tintedLines = tintOverlayLines(visible, RECOMMEND_OVERLAY_BG, state.terminalCols)
+    const tintedLines = tintOverlayLines(visible, themeColors.overlayBgRecommend, state.terminalCols)
     const cleared2 = tintedLines.map(l => l + EL)
     return cleared2.join('\n')
   }

@@ -200,6 +200,7 @@ export function createKeyHandler(ctx) {
     noteUserActivity,
     intervalToPingMode,
     PING_MODE_CYCLE,
+    themeRowIdx,
     setResults,
     readline,
   } = ctx
@@ -926,7 +927,8 @@ export function createKeyHandler(ctx) {
       const providerKeys = Object.keys(sources)
       const updateRowIdx = providerKeys.length
       const widthWarningRowIdx = updateRowIdx + 1
-      const cleanupLegacyProxyRowIdx = widthWarningRowIdx + 1
+      const themeRowIdx = widthWarningRowIdx + 1
+      const cleanupLegacyProxyRowIdx = themeRowIdx + 1
       const changelogViewRowIdx = cleanupLegacyProxyRowIdx + 1
         // 📖 Profile system removed - API keys now persist permanently across all sessions
       const maxRowIdx = changelogViewRowIdx
@@ -1108,6 +1110,19 @@ export function createKeyHandler(ctx) {
           || state.settingsCursor === cleanupLegacyProxyRowIdx
           || state.settingsCursor === changelogViewRowIdx
         ) return
+        // 📖 Theme configuration cycle inside settings
+        if (state.settingsCursor === themeRowIdx) {
+          const themes = ['dark', 'light', 'auto']
+          const currentTheme = state.config.settings?.theme || 'dark'
+          const nextIndex = (themes.indexOf(currentTheme) + 1) % themes.length
+          state.config.settings.theme = themes[nextIndex]
+          saveConfig(state.config)
+          try {
+            const { detectActiveTheme } = await import('../src/theme.js')
+            detectActiveTheme(state.config.settings.theme)
+          } catch {}
+          return
+        }
         // 📖 Widths Warning toggle (disable/enable)
         if (state.settingsCursor === widthWarningRowIdx) {
           toggleWidthsWarningSetting()

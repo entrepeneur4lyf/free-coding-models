@@ -34,7 +34,16 @@
 import chalk from 'chalk'
 import { createRequire } from 'module'
 import { sources } from '../sources.js'
-import { PING_INTERVAL, FRAMES } from './constants.js'
+import {
+  TABLE_FIXED_LINES,
+  COL_MODEL,
+  TIER_CYCLE,
+  msCell,
+  spinCell,
+  PING_INTERVAL,
+  FRAMES
+} from './constants.js'
+import { themeColors } from './theme.js'
 import { TIER_COLOR } from './tier-colors.js'
 import { getAvg, getVerdict, getUptime, getStabilityScore, getVersionStatusInfo } from './utils.js'
 import { usagePlaceholderForProvider } from './ping.js'
@@ -556,12 +565,12 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
     const row = '  ' + num + COL_SEP + tier + COL_SEP + sweCell + COL_SEP + ctxCell + COL_SEP + nameCell + COL_SEP + sourceCell + COL_SEP + pingCell + COL_SEP + avgCell + COL_SEP + status + COL_SEP + speedCell + COL_SEP + stabCell + COL_SEP + uptimeCell + COL_SEP + tokensCell
 
     if (isCursor) {
-      lines.push(chalk.bgRgb(155, 55, 135)(row))
+      lines.push(themeColors.bgModelCursor(row))
     } else if (r.isRecommended) {
       // 📖 Medium green background for recommended models (distinguishable from favorites)
-      lines.push(chalk.bgRgb(15, 40, 15)(row))
+      lines.push(themeColors.bgModelRecommended(row))
     } else if (r.isFavorite) {
-      lines.push(chalk.bgRgb(88, 64, 10)(row))
+      lines.push(themeColors.bgModelFavorite(row))
     } else {
       lines.push(row)
     }
