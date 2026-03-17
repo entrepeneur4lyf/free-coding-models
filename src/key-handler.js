@@ -350,6 +350,38 @@ export function createKeyHandler(ctx) {
     }
   }
 
+  // 📖 Keep the width-warning runtime state synced with the persisted Settings toggle
+  // 📖 so the overlay reacts immediately when the user enables or disables it.
+  function syncWidthsWarningState() {
+    const widthsWarningDisabled = state.config.settings?.disableWidthsWarning === true
+    state.disableWidthsWarning = widthsWarningDisabled
+
+    if (widthsWarningDisabled) {
+      state.widthWarningStartedAt = null
+      state.widthWarningDismissed = false
+      return
+    }
+
+    state.widthWarningShowCount = 0
+    if ((state.terminalCols || 80) < 166) {
+      state.widthWarningStartedAt = Date.now()
+      state.widthWarningDismissed = false
+      return
+    }
+
+    state.widthWarningStartedAt = null
+    state.widthWarningDismissed = false
+  }
+
+  // 📖 Toggle the width-warning setting and apply the effect immediately instead
+  // 📖 of waiting for a resize or restart.
+  function toggleWidthsWarningSetting() {
+    if (!state.config.settings) state.config.settings = {}
+    state.config.settings.disableWidthsWarning = !state.config.settings.disableWidthsWarning
+    syncWidthsWarningState()
+    saveConfig(state.config)
+  }
+
   function resetInstallEndpointsOverlay() {
     state.installEndpointsOpen = false
     state.installEndpointsPhase = 'providers'
@@ -1040,9 +1072,7 @@ export function createKeyHandler(ctx) {
 
         // 📖 Widths Warning toggle (Enter to toggle)
         if (state.settingsCursor === widthWarningRowIdx) {
-          if (!state.config.settings) state.config.settings = {}
-          state.config.settings.disableWidthsWarning = !state.config.settings.disableWidthsWarning
-          saveConfig(state.config)
+          toggleWidthsWarningSetting()
           return
         }
 
@@ -1080,9 +1110,7 @@ export function createKeyHandler(ctx) {
         ) return
         // 📖 Widths Warning toggle (disable/enable)
         if (state.settingsCursor === widthWarningRowIdx) {
-          if (!state.config.settings) state.config.settings = {}
-          state.config.settings.disableWidthsWarning = !state.config.settings.disableWidthsWarning
-          saveConfig(state.config)
+          toggleWidthsWarningSetting()
           return
         }
         // 📖 Profile system removed - API keys now persist permanently across all sessions

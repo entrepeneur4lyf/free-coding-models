@@ -2,6 +2,11 @@
 
 ---
 
+## 0.3.13
+
+### Fixed
+- **Small Width Warnings toggle actually works again**: the Settings row now shows `Small Width Warnings` with clear enabled/disabled status, the startup overlay reacts immediately to the toggle, and the narrow-terminal warning now auto-hides after 2 seconds instead of 4.
+
 ## 0.3.12
 
 > **Proxy / bridge update:** the current legacy proxy stack is now officially discontinued while we rebuild that whole layer from zero. This cleanup is intentional: Claude Code support, a smarter router, and a much more reliable external-tools bridge are being reworked as a separate, cleaner system and will come back in a future release. In the meantime, FCM has been cleaned up and narrowed to the stable direct-launch surface so the app stays solid for day-to-day usage.

@@ -869,6 +869,41 @@ describe('renderTable outdated footer banner', () => {
 
     assert.doesNotMatch(output, /Update available:/)
   })
+
+  it('skips the narrow-terminal overlay when width warnings are disabled', () => {
+    const output = renderTable(
+      [mockResult()],
+      0,
+      0,
+      0,
+      'avg',
+      'asc',
+      10_000,
+      Date.now(),
+      'opencode',
+      0,
+      0,
+      20,
+      120,
+      0,
+      null,
+      'normal',
+      'auto',
+      false,
+      Date.now(),
+      false,
+      0,
+      'idle',
+      null,
+      false,
+      null,
+      true,
+      true
+    )
+
+    assert.doesNotMatch(output, /Please maximize your terminal/)
+    assert.match(output, /free-coding-models/)
+  })
 })
 
 describe('renderSettings provider test badges', () => {
@@ -952,6 +987,22 @@ describe('renderSettings provider test badges', () => {
     const output = renderSettings()
 
     assert.match(output, /\[Missing Key 🔑\]/)
+  })
+
+  it('shows Small Width Warnings as enabled by default', () => {
+    const renderSettings = buildSettingsRenderer({ apiKeys: {}, providers: {}, settings: {} })
+    const output = renderSettings()
+
+    assert.match(output, /Small Width Warnings/)
+    assert.match(output, /Enabled/)
+  })
+
+  it('shows Small Width Warnings as disabled when the setting is on', () => {
+    const renderSettings = buildSettingsRenderer({ apiKeys: {}, providers: {}, settings: { disableWidthsWarning: true } })
+    const output = renderSettings()
+
+    assert.match(output, /Small Width Warnings/)
+    assert.match(output, /Disabled/)
   })
 })
 

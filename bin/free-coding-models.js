@@ -399,11 +399,11 @@ async function main() {
     originFilterMode: 0,          // 📖 Index into ORIGIN_CYCLE (0=All, then providers)
     premiumMode: cliArgs.premiumMode, // 📖 Special elite-only mode: S/S+ only, Health UP only, Perfect/Normal/Slow verdict only.
     hideUnconfiguredModels: config.settings?.hideUnconfiguredModels === true, // 📖 Hide providers with no configured API key when true.
-    disableWidthsWarning: config.settings?.disableWidthsWarning ?? false, // 📖 Disable widths warning toggle (default off)
+    disableWidthsWarning: config.settings?.disableWidthsWarning ?? false, // 📖 Cached for runtime checks; keep it in sync with config.settings.
       scrollOffset: 0,              // 📖 First visible model index in viewport
       terminalRows: process.stdout.rows || 24,  // 📖 Current terminal height
       terminalCols: process.stdout.columns || 80, // 📖 Current terminal width
-      widthWarningStartedAt: (process.stdout.columns || 80) < 166 ? now : null, // 📖 Start the narrow-terminal countdown immediately when booting in a small viewport.
+      widthWarningStartedAt: (process.stdout.columns || 80) < 166 && !(config.settings?.disableWidthsWarning ?? false) ? now : null, // 📖 Start immediately only when warnings are enabled in a narrow viewport.
     widthWarningDismissed: false, // 📖 Esc hides the narrow-terminal warning early for the current narrow-width session.
     widthWarningShowCount: 0, // 📖 Counter for how many times the narrow-terminal warning has been shown (max 2 per session).
     // 📖 Settings screen state (P key opens it)
@@ -465,9 +465,11 @@ async function main() {
   // 📖 Re-clamp viewport on terminal resize
   process.stdout.on('resize', () => {
     const prevCols = state.terminalCols
+    const widthsWarningDisabled = state.config.settings?.disableWidthsWarning === true
     state.terminalRows = process.stdout.rows || 24
     state.terminalCols = process.stdout.columns || 80
-    if (state.terminalCols < 166 && !state.disableWidthsWarning) {
+    state.disableWidthsWarning = widthsWarningDisabled
+    if (state.terminalCols < 166 && !widthsWarningDisabled) {
       if (prevCols >= 166 || state.widthWarningDismissed) {
         state.widthWarningStartedAt = Date.now()
         state.widthWarningDismissed = false
@@ -862,7 +864,7 @@ async function main() {
                 ? overlays.renderHelp()
               : state.changelogOpen
                 ? overlays.renderChangelog()
-                 : renderTable(state.results, state.pendingPings, state.frame, state.cursor, state.sortColumn, state.sortDirection, state.pingInterval, state.lastPingTime, state.mode, state.tierFilterMode, state.scrollOffset, state.terminalRows, state.terminalCols, state.originFilterMode, null, state.pingMode, state.pingModeSource, state.hideUnconfiguredModels, state.widthWarningStartedAt, state.widthWarningDismissed, state.widthWarningShowCount, state.settingsUpdateState, state.settingsUpdateLatestVersion, false, state.startupLatestVersion, state.versionAlertsEnabled)
+                 : renderTable(state.results, state.pendingPings, state.frame, state.cursor, state.sortColumn, state.sortDirection, state.pingInterval, state.lastPingTime, state.mode, state.tierFilterMode, state.scrollOffset, state.terminalRows, state.terminalCols, state.originFilterMode, null, state.pingMode, state.pingModeSource, state.hideUnconfiguredModels, state.widthWarningStartedAt, state.widthWarningDismissed, state.widthWarningShowCount, state.settingsUpdateState, state.settingsUpdateLatestVersion, false, state.startupLatestVersion, state.versionAlertsEnabled, state.config.settings?.disableWidthsWarning ?? false)
     process.stdout.write(ALT_HOME + content)
     if (process.stdout.isTTY) {
       process.stdout.flush && process.stdout.flush()
@@ -873,7 +875,7 @@ async function main() {
   const initialVisible = state.results.filter(r => !r.hidden)
   state.visibleSorted = sortResultsWithPinnedFavorites(initialVisible, state.sortColumn, state.sortDirection)
 
-  process.stdout.write(ALT_HOME + renderTable(state.results, state.pendingPings, state.frame, state.cursor, state.sortColumn, state.sortDirection, state.pingInterval, state.lastPingTime, state.mode, state.tierFilterMode, state.scrollOffset, state.terminalRows, state.terminalCols, state.originFilterMode, null, state.pingMode, state.pingModeSource, state.hideUnconfiguredModels, state.widthWarningStartedAt, state.widthWarningDismissed, state.widthWarningShowCount, state.settingsUpdateState, state.settingsUpdateLatestVersion, false, state.startupLatestVersion, state.versionAlertsEnabled))
+  process.stdout.write(ALT_HOME + renderTable(state.results, state.pendingPings, state.frame, state.cursor, state.sortColumn, state.sortDirection, state.pingInterval, state.lastPingTime, state.mode, state.tierFilterMode, state.scrollOffset, state.terminalRows, state.terminalCols, state.originFilterMode, null, state.pingMode, state.pingModeSource, state.hideUnconfiguredModels, state.widthWarningStartedAt, state.widthWarningDismissed, state.widthWarningShowCount, state.settingsUpdateState, state.settingsUpdateLatestVersion, false, state.startupLatestVersion, state.versionAlertsEnabled, state.config.settings?.disableWidthsWarning ?? false))
   if (process.stdout.isTTY) {
     process.stdout.flush && process.stdout.flush()
   }

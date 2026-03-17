@@ -217,11 +217,13 @@ export function createOverlayRenderers(state, deps) {
     const updateRow = `${updateBullet}${chalk.bold(updateActionLabel).padEnd(44)} ${updateStatus}`
     cursorLineByRow[updateRowIdx] = lines.length
     lines.push(updateCursor ? chalk.bgRgb(30, 30, 60)(updateRow) : updateRow)
-    // 📖 Widths Warning toggle row (disable widths warning)
+    // 📖 Width warning visibility row for the startup narrow-terminal overlay.
     const disableWidthsWarning = Boolean(state.config.settings?.disableWidthsWarning)
     const widthWarningBullet = state.settingsCursor === widthWarningRowIdx ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
-    const widthWarningStatus = disableWidthsWarning ? chalk.greenBright('DISABLED') : chalk.dim('enabled')
-    const widthWarningRow = `${widthWarningBullet}${chalk.bold('Disable Widths Warning').padEnd(44)} ${widthWarningStatus}`
+    const widthWarningStatus = disableWidthsWarning
+      ? chalk.redBright('🙈 Disabled')
+      : chalk.greenBright('👁 Enabled')
+    const widthWarningRow = `${widthWarningBullet}${chalk.bold('Small Width Warnings').padEnd(44)} ${widthWarningStatus}`
     cursorLineByRow[widthWarningRowIdx] = lines.length
     lines.push(state.settingsCursor === widthWarningRowIdx ? chalk.bgRgb(30, 30, 60)(widthWarningRow) : widthWarningRow)
     if (updateState === 'error' && state.settingsUpdateError) {
