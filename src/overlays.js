@@ -4,7 +4,7 @@
  *
  * @details
  *   This module centralizes all overlay rendering in one place:
- *   - Settings, Install Endpoints, Help, Smart Recommend, Feedback, Changelog
+ *   - Settings, Install Endpoints, Command Palette, Help, Smart Recommend, Feedback, Changelog
  *   - Settings diagnostics for provider key tests, including wrapped retry/error details
  *   - Recommend analysis timer orchestration and progress updates
  *
@@ -56,6 +56,7 @@ export function createOverlayRenderers(state, deps) {
     getToolMeta,
     getToolInstallPlan,
     padEndDisplay,
+    displayWidth,
   } = deps
 
   const bullet = (isCursor) => (isCursor ? themeColors.accentBold('  ❯ ') : themeColors.dim('    '))
@@ -534,6 +535,128 @@ export function createOverlayRenderers(state, deps) {
     return cleared.join('\n')
   }
 
+  // ─── Command palette renderer ──────────────────────────────────────────────
+  // 📖 renderCommandPalette draws a centered floating modal over the live table.
+  // 📖 It returns cursor-positioned ANSI rows instead of replacing the full screen,
+  // 📖 so ping updates continue to animate in the background behind the palette.
+  function renderCommandPalette() {
+    const terminalRows = state.terminalRows || 24
+    const terminalCols = state.terminalCols || 80
+    const panelWidth = Math.max(44, Math.min(96, terminalCols - 8))
+    const panelInnerWidth = Math.max(28, panelWidth - 4)
+    const panelPad = 2
+    const panelOuterWidth = panelWidth + (panelPad * 2)
+    const footerRowCount = 2
+    const headerRowCount = 3
+    const bodyRows = Math.max(6, Math.min(16, terminalRows - 12))
+
+    const truncatePlain = (text, width) => {
+      if (width <= 1) return ''
+      if (displayWidth(text) <= width) return text
+      if (width <= 2) return text.slice(0, width)
+      return text.slice(0, width - 1) + '…'
+    }
+
+    const highlightMatch = (label, positions = []) => {
+      if (!Array.isArray(positions) || positions.length === 0) return label
+      const posSet = new Set(positions)
+      let out = ''
+      for (let i = 0; i < label.length; i++) {
+        out += posSet.has(i) ? themeColors.accentBold(label[i]) : label[i]
+      }
+      return out
+    }
+
+    const allResults = Array.isArray(state.commandPaletteResults) ? state.commandPaletteResults.slice(0, 80) : []
+    const groupedLines = []
+    const cursorLineByRow = {}
+    let category = null
+
+    if (allResults.length === 0) {
+      groupedLines.push(themeColors.dim('  No command found. Try a broader query.'))
+    } else {
+      for (let idx = 0; idx < allResults.length; idx++) {
+        const entry = allResults[idx]
+        if (entry.category !== category) {
+          category = entry.category
+          groupedLines.push(themeColors.textBold(` ${category}`))
+        }
+
+        const isCursor = idx === state.commandPaletteCursor
+        const pointer = isCursor ? themeColors.accentBold('  ❯ ') : themeColors.dim('    ')
+        const shortcutText = entry.shortcut ? themeColors.dim(entry.shortcut) : ''
+        const shortcutWidth = entry.shortcut ? Math.min(16, displayWidth(entry.shortcut)) : 0
+        const labelMax = Math.max(12, panelInnerWidth - 8 - shortcutWidth)
+        const plainLabel = truncatePlain(entry.label, labelMax)
+        const label = highlightMatch(plainLabel, entry.matchPositions)
+        const row = `${pointer}${padEndDisplay(label, labelMax)}${entry.shortcut ? ` ${shortcutText}` : ''}`
+        cursorLineByRow[idx] = groupedLines.length
+        groupedLines.push(isCursor ? themeColors.bgCursor(row) : row)
+      }
+    }
+
+    const targetLine = cursorLineByRow[state.commandPaletteCursor] ?? 0
+    state.commandPaletteScrollOffset = keepOverlayTargetVisible(
+      state.commandPaletteScrollOffset,
+      targetLine,
+      groupedLines.length,
+      bodyRows
+    )
+    const { visible, offset } = sliceOverlayLines(groupedLines, state.commandPaletteScrollOffset, bodyRows)
+    state.commandPaletteScrollOffset = offset
+
+    const query = state.commandPaletteQuery || ''
+    const queryWithCursor = query.length > 0
+      ? themeColors.textBold(`${query}▏`)
+      : themeColors.dim('type a command…') + themeColors.accentBold('▏')
+
+    const panelLines = []
+    const title = themeColors.textBold('Command Palette')
+    const titleLeft = ` ${title}`
+    const titleRight = themeColors.dim('Esc close')
+    const titleWidth = Math.max(1, panelInnerWidth - 1 - displayWidth('Esc close'))
+    panelLines.push(`${padEndDisplay(titleLeft, titleWidth)} ${titleRight}`)
+    panelLines.push(` ${padEndDisplay(`> ${queryWithCursor}`, panelInnerWidth)}`)
+    panelLines.push(themeColors.dim(` ${'-'.repeat(Math.max(1, panelInnerWidth))}`))
+
+    for (const line of visible) {
+      panelLines.push(` ${padEndDisplay(line, panelInnerWidth)}`)
+    }
+
+    // 📖 Keep panel body stable by filling with blank rows when result list is short.
+    while (panelLines.length < bodyRows + headerRowCount) {
+      panelLines.push(` ${' '.repeat(panelInnerWidth)}`)
+    }
+
+    panelLines.push(themeColors.dim(` ${'-'.repeat(Math.max(1, panelInnerWidth))}`))
+    panelLines.push(` ${padEndDisplay(themeColors.dim('↑↓ navigate • Enter run • Type to search'), panelInnerWidth)}`)
+    panelLines.push(` ${padEndDisplay(themeColors.dim('PgUp/PgDn • Home/End'), panelInnerWidth)}`)
+
+    const blankPaddedLine = ' '.repeat(panelOuterWidth)
+    const paddedPanelLines = [
+      blankPaddedLine,
+      blankPaddedLine,
+      ...panelLines.map((line) => `${' '.repeat(panelPad)}${padEndDisplay(line, panelWidth)}${' '.repeat(panelPad)}`),
+      blankPaddedLine,
+      blankPaddedLine,
+    ]
+
+    const panelHeight = paddedPanelLines.length
+    const top = Math.max(1, Math.floor((terminalRows - panelHeight) / 2) + 1)
+    const left = Math.max(1, Math.floor((terminalCols - panelOuterWidth) / 2) + 1)
+
+    const tintedLines = paddedPanelLines.map((line) => {
+      const padded = padEndDisplay(line, panelOuterWidth)
+      return themeColors.overlayBgCommandPalette(padded)
+    })
+
+    // 📖 Absolute cursor positioning overlays the palette on top of the existing table.
+    // 📖 The next frame starts with ALT_HOME, so this remains stable without manual cleanup.
+    return tintedLines
+      .map((line, idx) => `\x1b[${top + idx};${left}H${line}`)
+      .join('')
+  }
+
   // ─── Help overlay renderer ────────────────────────────────────────────────
   // 📖 renderHelp: Draw the help overlay listing all key bindings.
   // 📖 Toggled with K key. Gives users a quick reference without leaving the TUI.
@@ -602,6 +725,7 @@ export function createOverlayRenderers(state, deps) {
     lines.push('')
     lines.push(`  ${heading('Controls')}`)
     lines.push(`  ${key('W')}  Toggle ping mode  ${hint('(speed 2s → normal 10s → slow 30s → forced 4s)')}`)
+    lines.push(`  ${key('Ctrl+P')}  Open command palette  ${hint('(search and run actions quickly)')}`)
     lines.push(`  ${key('E')}  Toggle configured models only  ${hint('(enabled by default)')}`)
     lines.push(`  ${key('Z')}  Cycle tool mode  ${hint('(OpenCode → Desktop → OpenClaw → Crush → Goose → Pi → Aider → Qwen → OpenHands → Amp)')}`)
     lines.push(`  ${key('F')}  Toggle favorite on selected row  ${hint('(⭐ pinned at top, persisted)')}`)
@@ -1058,6 +1182,7 @@ export function createOverlayRenderers(state, deps) {
     renderSettings,
     renderInstallEndpoints,
     renderToolInstallPrompt,
+    renderCommandPalette,
     renderHelp,
     renderRecommend,
     renderFeedback,

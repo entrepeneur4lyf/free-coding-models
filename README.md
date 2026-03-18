@@ -176,6 +176,7 @@ Press **`Z`** in the TUI to cycle between tools without restarting.
 | `E` | Toggle configured-only mode |
 | `F` | Favorite / unfavorite model |
 | `G` | Cycle global theme (`Auto → Dark → Light`) |
+| `Ctrl+P` | Open command palette (search + run actions) |
 | `R/S/C/M/O/L/A/H/V/B/U` | Sort columns |
 | `P` | Settings (API keys, providers, updates, theme) |
 | `Y` | Install Endpoints (push provider into tool config) |
@@ -200,6 +201,7 @@ Press **`Z`** in the TUI to cycle between tools without restarting.
 - **Configured-only default** — only shows providers you have keys for
 - **Keyless latency** — models ping even without an API key (show 🔑 NO KEY)
 - **Smart Recommend** — questionnaire picks the best model for your task type
+- **Command Palette** — `Ctrl+P` opens a searchable action launcher for filters, sorting, overlays, and quick toggles
 - **Install Endpoints** — push a full provider catalog into any tool's config (`Y`)
 - **Missing tool bootstrap** — detect absent CLIs, offer one-click install, then continue the selected launch automatically
 - **Width guardrail** — shows a warning instead of a broken table in narrow terminals

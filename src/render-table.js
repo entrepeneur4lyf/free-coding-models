@@ -570,6 +570,7 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
   // 📖 Line 2: install flow, recommend, feedback, and extended hints.
   lines.push(
     themeColors.dim(`  `) +
+    hotkey('Ctrl+P', ' Command palette') + themeColors.dim(`  •  `) +
     hotkey('Y', ' Install endpoints') + themeColors.dim(`  •  `) +
     hotkey('Q', ' Smart Recommend') + themeColors.dim(`  •  `) +
     hotkey('G', ' Theme') + themeColors.dim(`  •  `) +

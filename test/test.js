@@ -67,6 +67,11 @@ import {
   pickTestfcmSelectionIndex,
   resolveTestfcmToolSpec,
 } from '../src/testfcm.js'
+import {
+  buildCommandPaletteEntries,
+  fuzzyMatchCommand,
+  filterCommandPaletteEntries,
+} from '../src/command-palette.js'
 
 // ─── Helper: create a mock model result ──────────────────────────────────────
 // 📖 Builds a minimal result object matching the shape used by the main script
@@ -84,6 +89,39 @@ function mockResult(overrides = {}) {
     ...overrides,
   }
 }
+
+describe('command palette fuzzy search', () => {
+  it('matches in-order characters and returns highlight positions', () => {
+    const out = fuzzyMatchCommand('srt', 'Sort by rank')
+    assert.equal(out.matched, true)
+    assert.ok(out.score > 0)
+    assert.deepEqual(out.positions, [0, 2, 3])
+  })
+
+  it('returns no match when query letters are missing', () => {
+    const out = fuzzyMatchCommand('zzz', 'Sort by rank')
+    assert.equal(out.matched, false)
+    assert.equal(out.score, 0)
+    assert.deepEqual(out.positions, [])
+  })
+
+  it('ranks direct label matches above keyword-only matches', () => {
+    const entries = buildCommandPaletteEntries()
+    const ranked = filterCommandPaletteEntries(entries, 'uptime')
+    assert.ok(ranked.length > 0)
+    assert.equal(ranked[0].id, 'sort-uptime')
+  })
+
+  it('keeps a stable category+label order when scores tie', () => {
+    const tied = [
+      { id: 'x', label: 'Alpha', category: 'Sort', shortcut: null, keywords: ['foo'] },
+      { id: 'y', label: 'Beta', category: 'Filters', shortcut: null, keywords: ['foo'] },
+    ]
+    const ranked = filterCommandPaletteEntries(tied, 'foo')
+    assert.equal(ranked[0].category, 'Filters')
+    assert.equal(ranked[1].category, 'Sort')
+  })
+})
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // 📖 1. SOURCES.JS DATA INTEGRITY

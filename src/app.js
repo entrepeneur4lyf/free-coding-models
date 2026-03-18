@@ -406,6 +406,12 @@ export async function runApp(cliArgs, config) {
     settingsUpdateError: null,    // 📖 Last update-check error message for maintenance row
     config,                       // 📖 Live reference to the config object (updated on save)
     visibleSorted: [],            // 📖 Cached visible+sorted models — shared between render loop and key handlers
+    commandPaletteOpen: false,    // 📖 Whether the Ctrl+P command palette overlay is active.
+    commandPaletteQuery: '',      // 📖 Current command palette search query.
+    commandPaletteCursor: 0,      // 📖 Selected command index in the filtered command list.
+    commandPaletteScrollOffset: 0, // 📖 Vertical scroll offset for the command palette result viewport.
+    commandPaletteResults: [],    // 📖 Cached fuzzy-filtered command entries for the command palette.
+    commandPaletteFrozenTable: null, // 📖 Frozen table snapshot rendered behind the command palette overlay.
     helpVisible: false,           // 📖 Whether the help overlay (K key) is active
     settingsScrollOffset: 0,      // 📖 Vertical scroll offset for Settings overlay viewport
     helpScrollOffset: 0,          // 📖 Vertical scroll offset for Help overlay viewport
@@ -761,6 +767,7 @@ export async function runApp(cliArgs, config) {
     getToolMeta,
     getToolInstallPlan,
     padEndDisplay,
+    displayWidth,
   })
 
   onKeyPress = createKeyHandler({
@@ -858,16 +865,87 @@ export async function runApp(cliArgs, config) {
     refreshAutoPingMode()
     state.frame++
     // 📖 Cache visible+sorted models each frame so Enter handler always matches the display
-    if (!state.settingsOpen && !state.installEndpointsOpen && !state.toolInstallPromptOpen && !state.recommendOpen && !state.feedbackOpen && !state.changelogOpen) {
+    if (!state.settingsOpen && !state.installEndpointsOpen && !state.toolInstallPromptOpen && !state.recommendOpen && !state.feedbackOpen && !state.changelogOpen && !state.commandPaletteOpen) {
       const visible = state.results.filter(r => !r.hidden)
       state.visibleSorted = sortResultsWithPinnedFavorites(visible, state.sortColumn, state.sortDirection)
     }
+    let tableContent = null
+    if (state.commandPaletteOpen) {
+      if (!state.commandPaletteFrozenTable) {
+        // 📖 Freeze the full table (including countdown and spinner glyphs) while
+        // 📖 the command palette is open so the background remains perfectly static.
+        state.commandPaletteFrozenTable = renderTable(
+          state.results,
+          state.pendingPings,
+          state.frame,
+          state.cursor,
+          state.sortColumn,
+          state.sortDirection,
+          state.pingInterval,
+          state.lastPingTime,
+          state.mode,
+          state.tierFilterMode,
+          state.scrollOffset,
+          state.terminalRows,
+          state.terminalCols,
+          state.originFilterMode,
+          null,
+          state.pingMode,
+          state.pingModeSource,
+          state.hideUnconfiguredModels,
+          state.widthWarningStartedAt,
+          state.widthWarningDismissed,
+          state.widthWarningShowCount,
+          state.settingsUpdateState,
+          state.settingsUpdateLatestVersion,
+          false,
+          state.startupLatestVersion,
+          state.versionAlertsEnabled,
+          state.config.settings?.disableWidthsWarning ?? false
+        )
+      }
+      tableContent = state.commandPaletteFrozenTable
+    } else {
+      state.commandPaletteFrozenTable = null
+      tableContent = renderTable(
+        state.results,
+        state.pendingPings,
+        state.frame,
+        state.cursor,
+        state.sortColumn,
+        state.sortDirection,
+        state.pingInterval,
+        state.lastPingTime,
+        state.mode,
+        state.tierFilterMode,
+        state.scrollOffset,
+        state.terminalRows,
+        state.terminalCols,
+        state.originFilterMode,
+        null,
+        state.pingMode,
+        state.pingModeSource,
+        state.hideUnconfiguredModels,
+        state.widthWarningStartedAt,
+        state.widthWarningDismissed,
+        state.widthWarningShowCount,
+        state.settingsUpdateState,
+        state.settingsUpdateLatestVersion,
+        false,
+        state.startupLatestVersion,
+        state.versionAlertsEnabled,
+        state.config.settings?.disableWidthsWarning ?? false
+      )
+    }
+
     const content = state.settingsOpen
       ? overlays.renderSettings()
       : state.installEndpointsOpen
         ? overlays.renderInstallEndpoints()
       : state.toolInstallPromptOpen
         ? overlays.renderToolInstallPrompt()
+      : state.commandPaletteOpen
+        ? tableContent + overlays.renderCommandPalette()
       : state.recommendOpen
         ? overlays.renderRecommend()
         : state.feedbackOpen
@@ -876,7 +954,7 @@ export async function runApp(cliArgs, config) {
                 ? overlays.renderHelp()
               : state.changelogOpen
                 ? overlays.renderChangelog()
-                 : renderTable(state.results, state.pendingPings, state.frame, state.cursor, state.sortColumn, state.sortDirection, state.pingInterval, state.lastPingTime, state.mode, state.tierFilterMode, state.scrollOffset, state.terminalRows, state.terminalCols, state.originFilterMode, null, state.pingMode, state.pingModeSource, state.hideUnconfiguredModels, state.widthWarningStartedAt, state.widthWarningDismissed, state.widthWarningShowCount, state.settingsUpdateState, state.settingsUpdateLatestVersion, false, state.startupLatestVersion, state.versionAlertsEnabled, state.config.settings?.disableWidthsWarning ?? false)
+                 : tableContent
     process.stdout.write(ALT_HOME + content)
     if (process.stdout.isTTY) {
       process.stdout.flush && process.stdout.flush()
@@ -920,6 +998,15 @@ export async function runApp(cliArgs, config) {
   const runPingCycle = async () => {
     try {
     refreshAutoPingMode()
+
+    // 📖 Command palette intentionally pauses background ping bursts to avoid
+    // 📖 visible row jitter while users type and navigate commands.
+    if (state.commandPaletteOpen) {
+      state.lastPingTime = Date.now()
+      scheduleNextPing()
+      return
+    }
+
     state.lastPingTime = Date.now()
 
     // 📖 Refresh persisted usage snapshots each cycle so background usage data appears live in table.

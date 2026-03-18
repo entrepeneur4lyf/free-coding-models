@@ -52,6 +52,7 @@ const PALETTES = {
       recommend: [8, 21, 20],
       feedback: [31, 13, 20],
       changelog: [12, 24, 44],
+      commandPalette: [14, 20, 36],
     },
     cursor: {
       defaultBg: [39, 55, 90],
@@ -97,6 +98,7 @@ const PALETTES = {
       recommend: [246, 252, 248],
       feedback: [255, 247, 248],
       changelog: [244, 248, 255],
+      commandPalette: [242, 247, 255],
     },
     cursor: {
       defaultBg: [217, 231, 255],
@@ -312,4 +314,5 @@ export const themeColors = {
   overlayBgRecommend: (text) => paintBg(currentPalette().overlayBg.recommend, text, currentPalette().overlayFg),
   overlayBgFeedback: (text) => paintBg(currentPalette().overlayBg.feedback, text, currentPalette().overlayFg),
   overlayBgChangelog: (text) => paintBg(currentPalette().overlayBg.changelog, text, currentPalette().overlayFg),
+  overlayBgCommandPalette: (text) => paintBg(currentPalette().overlayBg.commandPalette, text, currentPalette().overlayFg),
 }

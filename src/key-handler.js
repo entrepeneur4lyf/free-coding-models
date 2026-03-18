@@ -31,6 +31,7 @@ import { loadChangelog } from './changelog-loader.js'
 import { loadConfig, replaceConfigContents } from './config.js'
 import { cleanupLegacyProxyArtifacts } from './legacy-proxy-cleanup.js'
 import { cycleThemeSetting, detectActiveTheme } from './theme.js'
+import { buildCommandPaletteEntries, filterCommandPaletteEntries } from './command-palette.js'
 
 // 📖 Some providers need an explicit probe model because the first catalog entry
 // 📖 is not guaranteed to be accepted by their chat endpoint.
@@ -536,9 +537,314 @@ export function createKeyHandler(ctx) {
     state.installEndpointsErrorMsg = null
   }
 
+  // 📖 Persist current table-view preferences so sort/filter state survives restarts.
+  function persistUiSettings() {
+    if (!state.config.settings || typeof state.config.settings !== 'object') state.config.settings = {}
+    state.config.settings.tierFilter = TIER_CYCLE[state.tierFilterMode]
+    state.config.settings.originFilter = ORIGIN_CYCLE[state.originFilterMode] ?? null
+    state.config.settings.sortColumn = state.sortColumn
+    state.config.settings.sortAsc = state.sortDirection === 'asc'
+    saveConfig(state.config)
+  }
+
+  // 📖 Shared table refresh helper so command-palette and hotkeys keep identical behavior.
+  function refreshVisibleSorted({ resetCursor = true } = {}) {
+    const visible = state.results.filter(r => !r.hidden)
+    state.visibleSorted = sortResultsWithPinnedFavorites(visible, state.sortColumn, state.sortDirection)
+    if (resetCursor) {
+      state.cursor = 0
+      state.scrollOffset = 0
+      return
+    }
+    if (state.cursor >= state.visibleSorted.length) state.cursor = Math.max(0, state.visibleSorted.length - 1)
+    adjustScrollOffset(state)
+  }
+
+  function setSortColumnFromCommand(col) {
+    if (state.sortColumn === col) {
+      state.sortDirection = state.sortDirection === 'asc' ? 'desc' : 'asc'
+    } else {
+      state.sortColumn = col
+      state.sortDirection = 'asc'
+    }
+    refreshVisibleSorted({ resetCursor: true })
+    persistUiSettings()
+  }
+
+  function setTierFilterFromCommand(tierLabel) {
+    const nextMode = tierLabel === null ? 0 : TIER_CYCLE.indexOf(tierLabel)
+    state.tierFilterMode = nextMode >= 0 ? nextMode : 0
+    applyTierFilter()
+    refreshVisibleSorted({ resetCursor: true })
+    persistUiSettings()
+  }
+
+  function openSettingsOverlay() {
+    state.settingsOpen = true
+    state.settingsCursor = 0
+    state.settingsEditMode = false
+    state.settingsAddKeyMode = false
+    state.settingsEditBuffer = ''
+    state.settingsScrollOffset = 0
+  }
+
+  function openRecommendOverlay() {
+    state.recommendOpen = true
+    state.recommendPhase = 'questionnaire'
+    state.recommendQuestion = 0
+    state.recommendCursor = 0
+    state.recommendAnswers = { taskType: null, priority: null, contextBudget: null }
+    state.recommendResults = []
+    state.recommendScrollOffset = 0
+  }
+
+  function openInstallEndpointsOverlay() {
+    state.installEndpointsOpen = true
+    state.installEndpointsPhase = 'providers'
+    state.installEndpointsCursor = 0
+    state.installEndpointsScrollOffset = 0
+    state.installEndpointsProviderKey = null
+    state.installEndpointsToolMode = null
+    state.installEndpointsConnectionMode = null
+    state.installEndpointsScope = null
+    state.installEndpointsSelectedModelIds = new Set()
+    state.installEndpointsErrorMsg = null
+    state.installEndpointsResult = null
+  }
+
+  function openFeedbackOverlay() {
+    state.feedbackOpen = true
+    state.bugReportBuffer = ''
+    state.bugReportStatus = 'idle'
+    state.bugReportError = null
+  }
+
+  function openChangelogOverlay() {
+    state.changelogOpen = true
+    state.changelogScrollOffset = 0
+    state.changelogPhase = 'index'
+    state.changelogCursor = 0
+    state.changelogSelectedVersion = null
+  }
+
+  function cycleToolMode() {
+    const modeOrder = getToolModeOrder()
+    const currentIndex = modeOrder.indexOf(state.mode)
+    const nextIndex = (currentIndex + 1) % modeOrder.length
+    state.mode = modeOrder[nextIndex]
+    if (!state.config.settings || typeof state.config.settings !== 'object') state.config.settings = {}
+    state.config.settings.preferredToolMode = state.mode
+    saveConfig(state.config)
+  }
+
+  function resetViewSettings() {
+    state.tierFilterMode = 0
+    state.originFilterMode = 0
+    state.sortColumn = 'avg'
+    state.sortDirection = 'asc'
+    if (!state.config.settings || typeof state.config.settings !== 'object') state.config.settings = {}
+    delete state.config.settings.tierFilter
+    delete state.config.settings.originFilter
+    delete state.config.settings.sortColumn
+    delete state.config.settings.sortAsc
+    saveConfig(state.config)
+    applyTierFilter()
+    refreshVisibleSorted({ resetCursor: true })
+  }
+
+  function toggleFavoriteOnSelectedRow() {
+    const selected = state.visibleSorted[state.cursor]
+    if (!selected) return
+    const wasFavorite = selected.isFavorite
+    toggleFavoriteModel(state.config, selected.providerKey, selected.modelId)
+    syncFavoriteFlags(state.results, state.config)
+    applyTierFilter()
+    refreshVisibleSorted({ resetCursor: false })
+
+    if (wasFavorite) {
+      state.cursor = 0
+      state.scrollOffset = 0
+      return
+    }
+
+    const selectedKey = toFavoriteKey(selected.providerKey, selected.modelId)
+    const newCursor = state.visibleSorted.findIndex(r => toFavoriteKey(r.providerKey, r.modelId) === selectedKey)
+    if (newCursor >= 0) state.cursor = newCursor
+    adjustScrollOffset(state)
+  }
+
+  function commandPaletteHasBlockingOverlay() {
+    return state.settingsOpen
+      || state.installEndpointsOpen
+      || state.toolInstallPromptOpen
+      || state.recommendOpen
+      || state.feedbackOpen
+      || state.helpVisible
+      || state.changelogOpen
+  }
+
+  function refreshCommandPaletteResults() {
+    const commands = buildCommandPaletteEntries()
+    state.commandPaletteResults = filterCommandPaletteEntries(commands, state.commandPaletteQuery)
+    if (state.commandPaletteCursor >= state.commandPaletteResults.length) {
+      state.commandPaletteCursor = Math.max(0, state.commandPaletteResults.length - 1)
+    }
+  }
+
+  function openCommandPalette() {
+    state.commandPaletteOpen = true
+    state.commandPaletteFrozenTable = null
+    state.commandPaletteQuery = ''
+    state.commandPaletteCursor = 0
+    state.commandPaletteScrollOffset = 0
+    refreshCommandPaletteResults()
+  }
+
+  function closeCommandPalette() {
+    state.commandPaletteOpen = false
+    state.commandPaletteFrozenTable = null
+    state.commandPaletteQuery = ''
+    state.commandPaletteCursor = 0
+    state.commandPaletteScrollOffset = 0
+    state.commandPaletteResults = []
+  }
+
+  function executeCommandPaletteEntry(entry) {
+    if (!entry?.id) return
+
+    if (entry.id.startsWith('filter-tier-')) {
+      setTierFilterFromCommand(entry.tierValue ?? null)
+      return
+    }
+
+    switch (entry.id) {
+      case 'filter-provider-cycle':
+        state.originFilterMode = (state.originFilterMode + 1) % ORIGIN_CYCLE.length
+        applyTierFilter()
+        refreshVisibleSorted({ resetCursor: true })
+        persistUiSettings()
+        return
+      case 'filter-configured-toggle':
+        state.hideUnconfiguredModels = !state.hideUnconfiguredModels
+        if (!state.config.settings || typeof state.config.settings !== 'object') state.config.settings = {}
+        state.config.settings.hideUnconfiguredModels = state.hideUnconfiguredModels
+        saveConfig(state.config)
+        applyTierFilter()
+        refreshVisibleSorted({ resetCursor: true })
+        return
+      case 'sort-rank': return setSortColumnFromCommand('rank')
+      case 'sort-tier': return setSortColumnFromCommand('tier')
+      case 'sort-provider': return setSortColumnFromCommand('origin')
+      case 'sort-model': return setSortColumnFromCommand('model')
+      case 'sort-latest-ping': return setSortColumnFromCommand('ping')
+      case 'sort-avg-ping': return setSortColumnFromCommand('avg')
+      case 'sort-swe': return setSortColumnFromCommand('swe')
+      case 'sort-ctx': return setSortColumnFromCommand('ctx')
+      case 'sort-health': return setSortColumnFromCommand('condition')
+      case 'sort-verdict': return setSortColumnFromCommand('verdict')
+      case 'sort-stability': return setSortColumnFromCommand('stability')
+      case 'sort-uptime': return setSortColumnFromCommand('uptime')
+      case 'open-settings': return openSettingsOverlay()
+      case 'open-help':
+        state.helpVisible = true
+        state.helpScrollOffset = 0
+        return
+      case 'open-changelog': return openChangelogOverlay()
+      case 'open-feedback': return openFeedbackOverlay()
+      case 'open-recommend': return openRecommendOverlay()
+      case 'open-install-endpoints': return openInstallEndpointsOverlay()
+      case 'action-cycle-theme': return cycleGlobalTheme()
+      case 'action-cycle-tool-mode': return cycleToolMode()
+      case 'action-cycle-ping-mode': {
+        const currentIdx = PING_MODE_CYCLE.indexOf(state.pingMode)
+        const nextIdx = currentIdx >= 0 ? (currentIdx + 1) % PING_MODE_CYCLE.length : 0
+        setPingMode(PING_MODE_CYCLE[nextIdx], 'manual')
+        return
+      }
+      case 'action-toggle-favorite': return toggleFavoriteOnSelectedRow()
+      case 'action-reset-view': return resetViewSettings()
+      default:
+        return
+    }
+  }
+
   return async (str, key) => {
     if (!key) return
     noteUserActivity()
+
+    // 📖 Ctrl+P toggles the command palette from the main table only.
+    if (key.ctrl && key.name === 'p') {
+      if (state.commandPaletteOpen) {
+        closeCommandPalette()
+        return
+      }
+      if (!commandPaletteHasBlockingOverlay()) {
+        openCommandPalette()
+      }
+      return
+    }
+
+    // 📖 Command palette captures the keyboard while active.
+    if (state.commandPaletteOpen) {
+      if (key.ctrl && key.name === 'c') { exit(0); return }
+
+      const pageStep = Math.max(1, (state.terminalRows || 1) - 10)
+
+      if (key.name === 'escape') {
+        closeCommandPalette()
+        return
+      }
+      if (key.name === 'up') {
+        const count = state.commandPaletteResults.length
+        if (count === 0) return
+        state.commandPaletteCursor = state.commandPaletteCursor > 0 ? state.commandPaletteCursor - 1 : count - 1
+        return
+      }
+      if (key.name === 'down') {
+        const count = state.commandPaletteResults.length
+        if (count === 0) return
+        state.commandPaletteCursor = state.commandPaletteCursor < count - 1 ? state.commandPaletteCursor + 1 : 0
+        return
+      }
+      if (key.name === 'pageup') {
+        state.commandPaletteCursor = Math.max(0, state.commandPaletteCursor - pageStep)
+        return
+      }
+      if (key.name === 'pagedown') {
+        const max = Math.max(0, state.commandPaletteResults.length - 1)
+        state.commandPaletteCursor = Math.min(max, state.commandPaletteCursor + pageStep)
+        return
+      }
+      if (key.name === 'home') {
+        state.commandPaletteCursor = 0
+        return
+      }
+      if (key.name === 'end') {
+        state.commandPaletteCursor = Math.max(0, state.commandPaletteResults.length - 1)
+        return
+      }
+      if (key.name === 'backspace') {
+        state.commandPaletteQuery = state.commandPaletteQuery.slice(0, -1)
+        state.commandPaletteCursor = 0
+        state.commandPaletteScrollOffset = 0
+        refreshCommandPaletteResults()
+        return
+      }
+      if (key.name === 'return') {
+        const selectedCommand = state.commandPaletteResults[state.commandPaletteCursor]
+        closeCommandPalette()
+        executeCommandPaletteEntry(selectedCommand)
+        return
+      }
+      if (str && str.length === 1 && !key.ctrl && !key.meta) {
+        state.commandPaletteQuery += str
+        state.commandPaletteCursor = 0
+        state.commandPaletteScrollOffset = 0
+        refreshCommandPaletteResults()
+        return
+      }
+      return
+    }
 
     if (!state.feedbackOpen && !state.settingsEditMode && !state.settingsAddKeyMode && key.name === 'g' && !key.ctrl && !key.meta) {
       cycleGlobalTheme()
@@ -1346,41 +1652,20 @@ export function createKeyHandler(ctx) {
     }
 
     // 📖 P key: open settings screen
-    if (key.name === 'p' && !key.shift) {
-      state.settingsOpen = true
-      state.settingsCursor = 0
-      state.settingsEditMode = false
-      state.settingsAddKeyMode = false
-      state.settingsEditBuffer = ''
-      state.settingsScrollOffset = 0
+    if (key.name === 'p' && !key.shift && !key.ctrl && !key.meta) {
+      openSettingsOverlay()
       return
     }
 
     // 📖 Q key: open Smart Recommend overlay
     if (key.name === 'q') {
-      state.recommendOpen = true
-      state.recommendPhase = 'questionnaire'
-      state.recommendQuestion = 0
-      state.recommendCursor = 0
-      state.recommendAnswers = { taskType: null, priority: null, contextBudget: null }
-      state.recommendResults = []
-      state.recommendScrollOffset = 0
+      openRecommendOverlay()
       return
     }
 
     // 📖 Y key: open Install Endpoints flow for configured providers.
     if (key.name === 'y') {
-      state.installEndpointsOpen = true
-      state.installEndpointsPhase = 'providers'
-      state.installEndpointsCursor = 0
-      state.installEndpointsScrollOffset = 0
-      state.installEndpointsProviderKey = null
-      state.installEndpointsToolMode = null
-      state.installEndpointsConnectionMode = null
-      state.installEndpointsScope = null
-      state.installEndpointsSelectedModelIds = new Set()
-      state.installEndpointsErrorMsg = null
-      state.installEndpointsResult = null
+      openInstallEndpointsOverlay()
       return
     }
 
@@ -1388,34 +1673,9 @@ export function createKeyHandler(ctx) {
 
     // 📖 Profile system removed - API keys now persist permanently across all sessions
 
-    // 📖 Helper: persist current UI view settings (tier, provider, sort) to config.settings
-    // 📖 Called after every T / D / sort key so preferences survive session restarts.
-    function persistUiSettings() {
-      if (!state.config.settings || typeof state.config.settings !== 'object') state.config.settings = {}
-      state.config.settings.tierFilter = TIER_CYCLE[state.tierFilterMode]
-      state.config.settings.originFilter = ORIGIN_CYCLE[state.originFilterMode] ?? null
-      state.config.settings.sortColumn = state.sortColumn
-      state.config.settings.sortAsc = state.sortDirection === 'asc'
-      saveConfig(state.config)
-    }
-
     // 📖 Shift+R: reset all UI view settings to defaults (tier, sort, provider) and clear persisted config
     if (key.name === 'r' && key.shift) {
-      state.tierFilterMode = 0
-      state.originFilterMode = 0
-      state.sortColumn = 'avg'
-      state.sortDirection = 'asc'
-      if (!state.config.settings || typeof state.config.settings !== 'object') state.config.settings = {}
-      delete state.config.settings.tierFilter
-      delete state.config.settings.originFilter
-      delete state.config.settings.sortColumn
-      delete state.config.settings.sortAsc
-      saveConfig(state.config)
-      applyTierFilter()
-      const visible = state.results.filter(r => !r.hidden)
-      state.visibleSorted = sortResultsWithPinnedFavorites(visible, state.sortColumn, state.sortDirection)
-      state.cursor = 0
-      state.scrollOffset = 0
+      resetViewSettings()
       return
     }
 
@@ -1430,54 +1690,19 @@ export function createKeyHandler(ctx) {
 
     if (sortKeys[key.name] && !key.ctrl && !key.shift) {
       const col = sortKeys[key.name]
-      // 📖 Toggle direction if same column, otherwise reset to asc
-      if (state.sortColumn === col) {
-        state.sortDirection = state.sortDirection === 'asc' ? 'desc' : 'asc'
-      } else {
-        state.sortColumn = col
-        state.sortDirection = 'asc'
-      }
-      // 📖 Recompute visible sorted list and reset cursor to top to avoid stale index
-      const visible = state.results.filter(r => !r.hidden)
-      state.visibleSorted = sortResultsWithPinnedFavorites(visible, state.sortColumn, state.sortDirection)
-      state.cursor = 0
-      state.scrollOffset = 0
-      persistUiSettings()
+      setSortColumnFromCommand(col)
       return
     }
 
     // 📖 F key: toggle favorite on the currently selected row and persist to config.
     if (key.name === 'f') {
-      const selected = state.visibleSorted[state.cursor]
-      if (!selected) return
-      const wasFavorite = selected.isFavorite
-      toggleFavoriteModel(state.config, selected.providerKey, selected.modelId)
-      syncFavoriteFlags(state.results, state.config)
-      applyTierFilter()
-      const visible = state.results.filter(r => !r.hidden)
-      state.visibleSorted = sortResultsWithPinnedFavorites(visible, state.sortColumn, state.sortDirection)
-
-      // 📖 UX rule: when unpinning a favorite, jump back to the top of the list.
-      if (wasFavorite) {
-        state.cursor = 0
-        state.scrollOffset = 0
-        return
-      }
-
-      const selectedKey = toFavoriteKey(selected.providerKey, selected.modelId)
-      const newCursor = state.visibleSorted.findIndex(r => toFavoriteKey(r.providerKey, r.modelId) === selectedKey)
-      if (newCursor >= 0) state.cursor = newCursor
-      else if (state.cursor >= state.visibleSorted.length) state.cursor = Math.max(0, state.visibleSorted.length - 1)
-      adjustScrollOffset(state)
+      toggleFavoriteOnSelectedRow()
       return
     }
 
     // 📖 I key: open Feedback overlay (anonymous Discord feedback)
     if (key.name === 'i') {
-      state.feedbackOpen = true
-      state.bugReportBuffer = ''
-      state.bugReportStatus = 'idle'
-      state.bugReportError = null
+      openFeedbackOverlay()
       return
     }
 
@@ -1552,13 +1777,7 @@ export function createKeyHandler(ctx) {
 
     // 📖 Mode toggle key: Z cycles through the supported tool targets.
     if (key.name === 'z') {
-      const modeOrder = getToolModeOrder()
-      const currentIndex = modeOrder.indexOf(state.mode)
-      const nextIndex = (currentIndex + 1) % modeOrder.length
-      state.mode = modeOrder[nextIndex]
-      if (!state.config.settings || typeof state.config.settings !== 'object') state.config.settings = {}
-      state.config.settings.preferredToolMode = state.mode
-      saveConfig(state.config)
+      cycleToolMode()
       return
     }
 
