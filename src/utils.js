@@ -220,7 +220,7 @@ export const getStabilityScore = (r) => {
 //
 // 📖 Supported columns in the sorter.
 // 📖 Most map directly to visible TUI sort hotkeys; `tier` remains available internally
-// 📖 even though the live TUI now reserves `Y` for the install-endpoints flow.
+// 📖 while `Y` is used by the live UI for favorites display mode.
 //   - 'rank'      (R key) — original index from sources.js
 //   - 'tier'      (internal) — tier hierarchy (S+ first, C last)
 //   - 'origin'    (O key) — provider name (all NIM for now, future-proofed)

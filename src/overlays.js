@@ -94,7 +94,8 @@ export function createOverlayRenderers(state, deps) {
     const providerKeys = Object.keys(sources)
     const updateRowIdx = providerKeys.length
     const themeRowIdx = updateRowIdx + 1
-    const cleanupLegacyProxyRowIdx = themeRowIdx + 1
+    const favoritesModeRowIdx = themeRowIdx + 1
+    const cleanupLegacyProxyRowIdx = favoritesModeRowIdx + 1
     const changelogViewRowIdx = cleanupLegacyProxyRowIdx + 1
     const EL = '\x1b[K'
     const lines = []
@@ -224,6 +225,16 @@ export function createOverlayRenderers(state, deps) {
     const themeRow = `${bullet(state.settingsCursor === themeRowIdx)}${themeColors.textBold('Global Theme').padEnd(44)} ${themeStatusColor(themeStatus)}`
     cursorLineByRow[themeRowIdx] = lines.length
     lines.push(state.settingsCursor === themeRowIdx ? themeColors.bgCursor(themeRow) : themeRow)
+
+    // 📖 Favorites mode row mirrors Y-key behavior from the main table.
+    const favoritesModeEnabled = state.favoritesPinnedAndSticky === true
+    const favoritesModeStatus = favoritesModeEnabled
+      ? themeColors.warningBold('Pinned + always visible')
+      : themeColors.info('Normal rows (filter/sort)')
+    const favoritesModeRow = `${bullet(state.settingsCursor === favoritesModeRowIdx)}${themeColors.textBold('Favorites Display Mode').padEnd(44)} ${favoritesModeStatus}`
+    cursorLineByRow[favoritesModeRowIdx] = lines.length
+    lines.push(state.settingsCursor === favoritesModeRowIdx ? themeColors.bgCursorSettingsList(favoritesModeRow) : favoritesModeRow)
+
     if (updateState === 'error' && state.settingsUpdateError) {
       lines.push(themeColors.error(`      ${state.settingsUpdateError}`))
     }
@@ -244,7 +255,7 @@ export function createOverlayRenderers(state, deps) {
     if (state.settingsEditMode) {
       lines.push(themeColors.dim('  Type API key  •  Enter Save  •  Esc Cancel'))
     } else {
-      lines.push(themeColors.dim('  ↑↓ Navigate  •  Enter Edit/Run/Cycle  •  + Add key  •  - Remove key  •  Space Toggle/Cycle  •  T Test key  •  U Updates  •  G Global theme  •  Esc Close'))
+      lines.push(themeColors.dim('  ↑↓ Navigate  •  Enter Edit/Run/Cycle  •  + Add key  •  - Remove key  •  Space Toggle/Cycle  •  T Test key  •  U Updates  •  G Global theme  •  Y Favorites mode  •  Esc Close'))
     }
     // 📖 Show sync/restore status message if set
     if (state.settingsSyncStatus) {
@@ -283,7 +294,7 @@ export function createOverlayRenderers(state, deps) {
 
   // ─── Install Endpoints overlay renderer ───────────────────────────────────
   // 📖 renderInstallEndpoints drives the provider → tool → scope → model flow
-  // 📖 behind the `Y` hotkey. It deliberately reuses the same overlay viewport
+  // 📖 opened from Settings/Command Palette. It deliberately reuses the same overlay viewport
   // 📖 helpers as Settings so long provider/model lists stay navigable.
   function renderInstallEndpoints() {
     const EL = '\x1b[K'
@@ -713,8 +724,8 @@ export function createOverlayRenderers(state, deps) {
     lines.push(`  ${label('CTX')}         Context window size (128k, 200k, 256k, 1m, etc.)  ${hint('Sort:')} ${key('C')}`)
     lines.push(`              ${hint('Bigger context = the model can read more of your codebase at once without forgetting.')}`)
     lines.push('')
-    lines.push(`  ${label('Model')}       Model name (⭐ = favorited, pinned at top)  ${hint('Sort:')} ${key('M')}  ${hint('Favorite:')} ${key('F')}`)
-    lines.push(`              ${hint('Star the ones you like — they stay pinned at the top across restarts.')}`)
+    lines.push(`  ${label('Model')}       Model name (⭐ = favorited)  ${hint('Sort:')} ${key('M')}  ${hint('Favorite:')} ${key('F')}`)
+    lines.push(`              ${hint('Star the ones you like. Press Y to switch between pinned mode and normal filter/sort mode.')}`)
     lines.push('')
     lines.push(`  ${label('Provider')}    Provider source (NIM, Groq, Cerebras, etc.)  ${hint('Sort:')} ${key('O')}  ${hint('Cycle:')} ${key('D')}`)
     lines.push(`              ${hint('Same model on different providers can have very different speed and uptime.')}`)
@@ -754,7 +765,9 @@ export function createOverlayRenderers(state, deps) {
     lines.push(`  ${key('Ctrl+P')}  Open ⚡️ command palette  ${hint('(search and run actions quickly)')}`)
     lines.push(`  ${key('E')}  Toggle configured models only  ${hint('(enabled by default)')}`)
     lines.push(`  ${key('Z')}  Cycle tool mode  ${hint('(OpenCode → Desktop → OpenClaw → Crush → Goose → Pi → Aider → Qwen → OpenHands → Amp)')}`)
-    lines.push(`  ${key('F')}  Toggle favorite on selected row  ${hint('(⭐ pinned at top, persisted)')}`)
+    lines.push(`  ${key('F')}  Toggle favorite on selected row  ${hint('(⭐ persisted across sessions)')}`)
+    lines.push(`  ${key('Y')}  Toggle favorites mode  ${hint('(Pinned + always visible ↔ Normal filter/sort behavior)')}`)
+    lines.push(`  ${key('X')}  Clear active text filter  ${hint('(remove custom query applied from ⚡️ Command Palette)')}`)
     lines.push(`  ${key('Q')}  Smart Recommend  ${hint('(🎯 find the best model for your task — questionnaire + live analysis)')}`)
     lines.push(`  ${key('G')}  Cycle theme  ${hint('(auto → dark → light)')}`)
     lines.push(`  ${themeColors.errorBold('I')}  Feedback, bugs & requests  ${hint('(📝 send anonymous feedback, bug reports, or feature requests)')}`)
@@ -770,7 +783,8 @@ export function createOverlayRenderers(state, deps) {
     lines.push(`  ${key('PgUp/PgDn')}    Jump by page`)
     lines.push(`  ${key('Home/End')}     Jump first/last row`)
     lines.push(`  ${key('Enter')}        Edit key / run selected maintenance action`)
-    lines.push(`  ${key('Space')}        Toggle provider enable/disable`)
+    lines.push(`  ${key('Space')}        Toggle selected row option (provider/theme/favorites)`)
+    lines.push(`  ${key('Y')}            Toggle favorites mode (global)`)
     lines.push(`  ${key('T')}            Test selected provider key`)
     lines.push(`  ${key('U')}            Check updates manually`)
     lines.push(`  ${key('G')}            Cycle theme globally`)

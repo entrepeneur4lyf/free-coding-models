@@ -121,6 +121,26 @@ describe('command palette fuzzy search', () => {
     const ranked = filterCommandPaletteEntries(tied, 'foo')
     assert.ok(ranked.length >= 2)
   })
+
+  it('exposes explicit ping mode commands in the action submenu', () => {
+    const entries = buildCommandPaletteEntries()
+    const ids = new Set(entries.map((entry) => entry.id))
+    assert.ok(ids.has('action-set-ping-speed'))
+    assert.ok(ids.has('action-set-ping-normal'))
+    assert.ok(ids.has('action-set-ping-slow'))
+    assert.ok(ids.has('action-set-ping-forced'))
+  })
+
+  it('exposes explicit tool and favorites mode commands in the action submenu', () => {
+    const entries = buildCommandPaletteEntries()
+    const ids = new Set(entries.map((entry) => entry.id))
+    assert.ok(ids.has('action-set-tool-opencode'))
+    assert.ok(ids.has('action-set-tool-opencode-desktop'))
+    assert.ok(ids.has('action-set-tool-openclaw'))
+    assert.ok(ids.has('action-toggle-favorite-mode'))
+    assert.ok(ids.has('action-favorites-mode-pinned'))
+    assert.ok(ids.has('action-favorites-mode-normal'))
+  })
 })
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -871,6 +891,45 @@ describe('renderTable outdated footer banner', () => {
     const output = renderTable(results, 0, 0, null, 'avg', 'asc', 10_000, Date.now(), 'opencode', 0, 0, 20, 190)
 
     assert.doesNotMatch(output, /Update available:/)
+  })
+
+  it('shows the active custom text filter badge between changelog and exit hints', () => {
+    const results = [
+      mockResult({ providerKey: 'nvidia', totalTokens: 0 }),
+    ]
+    const output = renderTable(
+      results,
+      0,
+      0,
+      null,
+      'avg',
+      'asc',
+      10_000,
+      Date.now(),
+      'opencode',
+      0,
+      0,
+      20,
+      190,
+      0,
+      null,
+      'normal',
+      'auto',
+      false,
+      null,
+      false,
+      0,
+      'idle',
+      null,
+      false,
+      null,
+      true,
+      true,
+      'deep'
+    )
+
+    assert.match(output, /X Disable filter: "deep"/)
+    assert.match(output, /N Changelog[\s\S]*X Disable filter: "deep"[\s\S]*Ctrl\+C Exit/)
   })
 
   it('stays quiet in dev-mode render paths even if npm has a newer published version', () => {
@@ -1676,10 +1735,12 @@ describe('config profile functions', () => {
     assert.equal(settings.sortAsc, true)
     assert.equal(settings.pingInterval, 10000)
     assert.equal(settings.hideUnconfiguredModels, true)
+    assert.equal(settings.favoritesPinnedAndSticky, false)
   })
 
   it('defaults configured-only mode and preferred tool mode in profile settings', () => {
     assert.equal(_emptyProfileSettings().hideUnconfiguredModels, true)
+    assert.equal(_emptyProfileSettings().favoritesPinnedAndSticky, false)
     assert.equal(_emptyProfileSettings().preferredToolMode, 'opencode')
     assert.equal(_emptyProfileSettings().theme, 'auto')
   })

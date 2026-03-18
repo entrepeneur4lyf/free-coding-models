@@ -185,6 +185,8 @@ Press **`Z`** in the TUI to cycle between tools without restarting.
 | `D` | Cycle provider filter |
 | `E` | Toggle configured-only mode |
 | `F` | Favorite / unfavorite model |
+| `Y` | Toggle favorites mode (`Normal filter/sort` default ↔ `Pinned + always visible`) |
+| `X` | Clear active custom text filter |
 | `G` | Cycle global theme (`Auto → Dark → Light`) |
 | `Ctrl+P` | Open ⚡️ command palette (search + run actions) |
 | `R/S/C/M/O/L/A/H/V/B/U` | Sort columns |
@@ -206,12 +208,12 @@ Press **`Z`** in the TUI to cycle between tools without restarting.
 - **Adaptive monitoring** — 2s burst for 60s → 10s normal → 30s idle
 - **Stability score** — composite 0–100 (p95 latency, jitter, spike rate, uptime)
 - **Smart ranking** — top 3 highlighted 🥇🥈🥉
-- **Favorites** — pin models with `F`, persisted across sessions
+- **Favorites** — star models with `F`, persisted across sessions, default to normal rows, and switch display mode with `Y` (pinned+sticky vs normal rows)
 - **Configured-only default** — only shows providers you have keys for
 - **Keyless latency** — models ping even without an API key (show 🔑 NO KEY)
 - **Smart Recommend** — questionnaire picks the best model for your task type
 - **⚡️ Command Palette** — `Ctrl+P` opens a searchable action launcher for filters, sorting, overlays, and quick toggles
-- **Install Endpoints** — push a full provider catalog into any tool's config (`Y`)
+- **Install Endpoints** — push a full provider catalog into any tool's config (from Settings `P` or ⚡️ Command Palette)
 - **Missing tool bootstrap** — detect absent CLIs, offer one-click install, then continue the selected launch automatically
 - **Width guardrail** — shows a warning instead of a broken table in narrow terminals
 - **Readable everywhere** — semantic theme palette keeps table rows, overlays, badges, and help screens legible in dark and light terminals

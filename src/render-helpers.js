@@ -168,10 +168,23 @@ export function calculateViewport(terminalRows, scrollOffset, totalModels, extra
 
 // 📖 sortResultsWithPinnedFavorites: Recommended models are pinned above favorites, favorites above non-favorites.
 // 📖 Recommended: sorted by recommendation score (highest first).
-// 📖 Favorites: keep insertion order (favoriteRank).
+// 📖 Favorites: keep insertion order (favoriteRank) when pinFavorites=true.
 // 📖 Non-favorites: active sort column/direction.
 // 📖 Models that are both recommended AND favorite — show in recommended section.
-export function sortResultsWithPinnedFavorites(results, sortColumn, sortDirection) {
+// 📖 pinFavorites=false keeps favorites highlighted but lets normal sort/filter order apply.
+export function sortResultsWithPinnedFavorites(results, sortColumn, sortDirection, { pinFavorites = true } = {}) {
+  if (!pinFavorites) {
+    const recommendedRows = results
+      .filter((r) => r.isRecommended)
+      .sort((a, b) => (b.recommendScore || 0) - (a.recommendScore || 0))
+    const nonRecommendedRows = sortResults(
+      results.filter((r) => !r.isRecommended),
+      sortColumn,
+      sortDirection
+    )
+    return [...recommendedRows, ...nonRecommendedRows]
+  }
+
   const recommendedRows = results
     .filter((r) => r.isRecommended && !r.isFavorite)
     .sort((a, b) => (b.recommendScore || 0) - (a.recommendScore || 0))

@@ -519,7 +519,9 @@ export function createKeyHandler(ctx) {
   // 📖 Shared table refresh helper so command-palette and hotkeys keep identical behavior.
   function refreshVisibleSorted({ resetCursor = true } = {}) {
     const visible = state.results.filter(r => !r.hidden)
-    state.visibleSorted = sortResultsWithPinnedFavorites(visible, state.sortColumn, state.sortDirection)
+    state.visibleSorted = sortResultsWithPinnedFavorites(visible, state.sortColumn, state.sortDirection, {
+      pinFavorites: state.favoritesPinnedAndSticky,
+    })
     if (resetCursor) {
       state.cursor = 0
       state.scrollOffset = 0
@@ -600,10 +602,46 @@ export function createKeyHandler(ctx) {
     const modeOrder = getToolModeOrder()
     const currentIndex = modeOrder.indexOf(state.mode)
     const nextIndex = (currentIndex + 1) % modeOrder.length
-    state.mode = modeOrder[nextIndex]
+    setToolMode(modeOrder[nextIndex])
+  }
+
+  // 📖 Keep tool-mode changes centralized so keyboard shortcuts and command palette
+  // 📖 both persist to config exactly the same way.
+  function setToolMode(nextMode) {
+    if (!getToolModeOrder().includes(nextMode)) return
+    state.mode = nextMode
     if (!state.config.settings || typeof state.config.settings !== 'object') state.config.settings = {}
     state.config.settings.preferredToolMode = state.mode
     saveConfig(state.config)
+  }
+
+  // 📖 Favorites display mode:
+  // 📖 - true  => favorites stay pinned + always visible (legacy behavior)
+  // 📖 - false => favorites are just starred rows and obey normal sort/filter rules
+  function setFavoritesDisplayMode(nextPinned, { preserveSelection = true } = {}) {
+    const normalizedNextPinned = nextPinned !== false
+    if (state.favoritesPinnedAndSticky === normalizedNextPinned) return
+
+    const selected = preserveSelection ? state.visibleSorted[state.cursor] : null
+    const selectedKey = selected ? toFavoriteKey(selected.providerKey, selected.modelId) : null
+
+    state.favoritesPinnedAndSticky = normalizedNextPinned
+    if (!state.config.settings || typeof state.config.settings !== 'object') state.config.settings = {}
+    state.config.settings.favoritesPinnedAndSticky = state.favoritesPinnedAndSticky
+    saveConfig(state.config)
+
+    applyTierFilter()
+    refreshVisibleSorted({ resetCursor: false })
+
+    if (selectedKey) {
+      const selectedIdx = state.visibleSorted.findIndex((row) => toFavoriteKey(row.providerKey, row.modelId) === selectedKey)
+      if (selectedIdx >= 0) state.cursor = selectedIdx
+      adjustScrollOffset(state)
+    }
+  }
+
+  function toggleFavoritesDisplayMode() {
+    setFavoritesDisplayMode(!state.favoritesPinnedAndSticky)
   }
 
   function resetViewSettings() {
@@ -631,7 +669,7 @@ export function createKeyHandler(ctx) {
     applyTierFilter()
     refreshVisibleSorted({ resetCursor: false })
 
-    if (wasFavorite) {
+    if (wasFavorite && state.favoritesPinnedAndSticky) {
       state.cursor = 0
       state.scrollOffset = 0
       return
@@ -654,11 +692,28 @@ export function createKeyHandler(ctx) {
   }
 
   function refreshCommandPaletteResults() {
-    const tree = buildCommandPaletteTree(state.results || [])
-    const flat = flattenCommandTree(tree, state.commandPaletteExpandedIds)
-    state.commandPaletteResults = filterCommandPaletteEntries(flat, state.commandPaletteQuery)
-
     const query = (state.commandPaletteQuery || '').trim()
+    const tree = buildCommandPaletteTree(state.results || [])
+    // 📖 Keep collapsed view clean when query is empty, but search across the
+    // 📖 full tree when users type so hidden submenu commands still appear.
+    let flat
+    if (query.length > 0) {
+      const expandedIds = new Set()
+      const collectExpandedIds = (nodes) => {
+        for (const node of nodes || []) {
+          if (Array.isArray(node.children) && node.children.length > 0) {
+            expandedIds.add(node.id)
+            collectExpandedIds(node.children)
+          }
+        }
+      }
+      collectExpandedIds(tree)
+      flat = flattenCommandTree(tree, expandedIds)
+    } else {
+      flat = flattenCommandTree(tree, state.commandPaletteExpandedIds)
+    }
+    state.commandPaletteResults = filterCommandPaletteEntries(flat, query)
+
     if (query.length > 0) {
       state.commandPaletteResults.unshift({
         id: 'filter-custom-text-apply',
@@ -706,6 +761,21 @@ export function createKeyHandler(ctx) {
 
   function executeCommandPaletteEntry(entry) {
     if (!entry?.id) return
+
+    if (entry.id.startsWith('action-set-ping-') && entry.pingMode) {
+      setPingMode(entry.pingMode, 'manual')
+      return
+    }
+
+    if (entry.id.startsWith('action-set-tool-') && entry.toolMode) {
+      setToolMode(entry.toolMode)
+      return
+    }
+
+    if (entry.id.startsWith('action-favorites-mode-') && typeof entry.favoritesPinned === 'boolean') {
+      setFavoritesDisplayMode(entry.favoritesPinned)
+      return
+    }
 
     if (entry.id.startsWith('filter-tier-')) {
       setTierFilterFromCommand(entry.tier ?? null)
@@ -793,6 +863,7 @@ export function createKeyHandler(ctx) {
         return
       }
       case 'action-toggle-favorite': return toggleFavoriteOnSelectedRow()
+      case 'action-toggle-favorite-mode': return toggleFavoritesDisplayMode()
       case 'action-reset-view': return resetViewSettings()
       default:
         return
@@ -1442,7 +1513,8 @@ export function createKeyHandler(ctx) {
       const providerKeys = Object.keys(sources)
       const updateRowIdx = providerKeys.length
       const themeRowIdx = updateRowIdx + 1
-      const cleanupLegacyProxyRowIdx = themeRowIdx + 1
+      const favoritesModeRowIdx = themeRowIdx + 1
+      const cleanupLegacyProxyRowIdx = favoritesModeRowIdx + 1
       const changelogViewRowIdx = cleanupLegacyProxyRowIdx + 1
         // 📖 Profile system removed - API keys now persist permanently across all sessions
       const maxRowIdx = changelogViewRowIdx
@@ -1523,10 +1595,7 @@ export function createKeyHandler(ctx) {
         setResults(nextResults)
         syncFavoriteFlags(state.results, state.config)
         applyTierFilter()
-        const visible = state.results.filter(r => !r.hidden)
-        state.visibleSorted = sortResultsWithPinnedFavorites(visible, state.sortColumn, state.sortDirection)
-        if (state.cursor >= state.visibleSorted.length) state.cursor = Math.max(0, state.visibleSorted.length - 1)
-        adjustScrollOffset(state)
+        refreshVisibleSorted({ resetCursor: false })
         // 📖 Re-ping all models that were 'noauth' (got 401 without key) but now have a key
         // 📖 This makes the TUI react immediately when a user adds an API key in settings
         const pingModel = getPingModel?.()
@@ -1591,6 +1660,11 @@ export function createKeyHandler(ctx) {
           return
         }
 
+        if (state.settingsCursor === favoritesModeRowIdx) {
+          toggleFavoritesDisplayMode()
+          return
+        }
+
         if (state.settingsCursor === cleanupLegacyProxyRowIdx) {
           runLegacyProxyCleanup()
           return
@@ -1629,6 +1703,10 @@ export function createKeyHandler(ctx) {
           cycleGlobalTheme()
           return
         }
+        if (state.settingsCursor === favoritesModeRowIdx) {
+          toggleFavoritesDisplayMode()
+          return
+        }
         // 📖 Profile system removed - API keys now persist permanently across all sessions
 
         // 📖 Toggle enabled/disabled for selected provider
@@ -1644,6 +1722,7 @@ export function createKeyHandler(ctx) {
         if (
           state.settingsCursor === updateRowIdx
           || state.settingsCursor === themeRowIdx
+          || state.settingsCursor === favoritesModeRowIdx
           || state.settingsCursor === cleanupLegacyProxyRowIdx
           || state.settingsCursor === changelogViewRowIdx
         ) return
@@ -1658,6 +1737,12 @@ export function createKeyHandler(ctx) {
 
       if (key.name === 'u') {
         checkUpdatesFromSettings()
+        return
+      }
+
+      // 📖 Y toggles favorites display mode directly from Settings.
+      if (key.name === 'y') {
+        toggleFavoritesDisplayMode()
         return
       }
 
@@ -1707,7 +1792,20 @@ export function createKeyHandler(ctx) {
       return
     }
 
-    // 📖 Y key freed — Install Endpoints is now accessible only via Settings (P) or Command Palette (Ctrl+P).
+    // 📖 Y key toggles favorites display mode (pinned+sticky vs normal rows).
+    if (key.name === 'y' && !key.ctrl && !key.meta) {
+      toggleFavoritesDisplayMode()
+      return
+    }
+
+    // 📖 X clears the active free-text filter set from the command palette.
+    if (key.name === 'x' && !key.ctrl && !key.meta) {
+      if (!state.customTextFilter) return
+      state.customTextFilter = null
+      applyTierFilter()
+      refreshVisibleSorted({ resetCursor: true })
+      return
+    }
 
     // 📖 Profile system removed - API keys now persist permanently across all sessions
 
@@ -1720,7 +1818,8 @@ export function createKeyHandler(ctx) {
     }
 
     // 📖 Sorting keys: R=rank, O=origin, M=model, L=latest ping, A=avg ping, S=SWE-bench, C=context, H=health, V=verdict, B=stability, U=uptime, G=usage
-    // 📖 T is reserved for tier filter cycling. Y is now free (Install Endpoints moved to Settings/Palette).
+    // 📖 T is reserved for tier filter cycling. Y toggles favorites display mode.
+    // 📖 X clears the active custom text filter.
     // 📖 D is now reserved for provider filter cycling
     // 📖 Shift+R is reserved for reset view settings
     const sortKeys = {
@@ -1763,10 +1862,7 @@ export function createKeyHandler(ctx) {
       state.config.settings.hideUnconfiguredModels = state.hideUnconfiguredModels
       saveConfig(state.config)
       applyTierFilter()
-      const visible = state.results.filter(r => !r.hidden)
-      state.visibleSorted = sortResultsWithPinnedFavorites(visible, state.sortColumn, state.sortDirection)
-      state.cursor = 0
-      state.scrollOffset = 0
+      refreshVisibleSorted({ resetCursor: true })
       return
     }
 
@@ -1775,10 +1871,7 @@ export function createKeyHandler(ctx) {
       state.tierFilterMode = (state.tierFilterMode + 1) % TIER_CYCLE.length
       applyTierFilter()
       // 📖 Recompute visible sorted list and reset cursor to avoid stale index into new filtered set
-      const visible = state.results.filter(r => !r.hidden)
-      state.visibleSorted = sortResultsWithPinnedFavorites(visible, state.sortColumn, state.sortDirection)
-      state.cursor = 0
-      state.scrollOffset = 0
+      refreshVisibleSorted({ resetCursor: true })
       persistUiSettings()
       return
     }
@@ -1788,10 +1881,7 @@ export function createKeyHandler(ctx) {
       state.originFilterMode = (state.originFilterMode + 1) % ORIGIN_CYCLE.length
       applyTierFilter()
       // 📖 Recompute visible sorted list and reset cursor to avoid stale index into new filtered set
-      const visible = state.results.filter(r => !r.hidden)
-      state.visibleSorted = sortResultsWithPinnedFavorites(visible, state.sortColumn, state.sortDirection)
-      state.cursor = 0
-      state.scrollOffset = 0
+      refreshVisibleSorted({ resetCursor: true })
       persistUiSettings()
       return
     }

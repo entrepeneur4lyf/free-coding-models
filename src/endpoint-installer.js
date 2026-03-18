@@ -3,7 +3,7 @@
  * @description Install and refresh FCM-managed provider catalogs inside external tool configs.
  *
  * @details
- *   📖 This module powers the `Y` hotkey flow in the TUI.
+ *   📖 This module powers the Install Endpoints flow in the TUI.
  *   It lets users pick one configured provider, choose a target tool, then install either:
  *   - the full provider catalog (`all` models), or
  *   - a curated subset of specific models (`selected`)

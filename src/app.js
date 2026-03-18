@@ -21,8 +21,8 @@
  *   - JSON config stored in ~/.free-coding-models.json (auto-migrates from old plain-text)
  *   - Multi-provider support via sources.js (NIM/Groq/Cerebras/OpenRouter/Hugging Face/Replicate/DeepInfra/... — extensible)
  *   - Settings screen (P key) to manage API keys, provider toggles, manual updates, and provider-key diagnostics
- *   - Install Endpoints flow (Y key) to push provider catalogs into OpenCode, OpenClaw, Crush, and Goose
- *   - Favorites system: toggle with F, pin rows to top, persist between sessions
+ *   - Install Endpoints flow (Settings / Command Palette) to push provider catalogs into OpenCode, OpenClaw, Crush, and Goose
+ *   - Favorites system: toggle with F, switch pinning mode with Y, persist between sessions
  *   - Uptime percentage tracking (successful pings / total pings)
  *   - Sortable columns (R/O/M/L/A/S/C/H/V/B/U/G keys)
  *   - Tier filtering via T key (cycles S+→S→A+→A→A-→B+→B→C→All)
@@ -307,7 +307,7 @@ export async function runApp(cliArgs, config) {
   }
 
   // 📖 Re-sync tracked external-tool catalogs after the live provider catalog has settled.
-  // 📖 This keeps prior `Y` installs aligned with the current FCM model list.
+  // 📖 This keeps prior endpoint installs aligned with the current FCM model list.
   refreshInstalledEndpoints(config)
 
   // 📖 Build results from MODELS — only include enabled providers
@@ -383,6 +383,7 @@ export async function runApp(cliArgs, config) {
     tierFilterMode: 0,            // 📖 Index into TIER_CYCLE (0=All, 1=S+, 2=S, ...)
     originFilterMode: 0,          // 📖 Index into ORIGIN_CYCLE (0=All, then providers)
     hideUnconfiguredModels: config.settings?.hideUnconfiguredModels === true, // 📖 Hide providers with no configured API key when true.
+    favoritesPinnedAndSticky: config.settings?.favoritesPinnedAndSticky === true, // 📖 false by default: favorites follow normal sort/filter rules until Y enables pinned+sticky mode.
       scrollOffset: 0,              // 📖 First visible model index in viewport
       terminalRows: process.stdout.rows || 24,  // 📖 Current terminal height
       terminalCols: process.stdout.columns || 80, // 📖 Current terminal width
@@ -409,11 +410,11 @@ export async function runApp(cliArgs, config) {
     commandPaletteScrollOffset: 0, // 📖 Vertical scroll offset for the command palette result viewport.
     commandPaletteResults: [],    // 📖 Cached fuzzy-filtered command entries for the command palette.
     commandPaletteFrozenTable: null, // 📖 Frozen table snapshot rendered behind the command palette overlay.
-    commandPaletteExpandedIds: new Set(['filters']), // 📖 Set of expanded category/subcategory IDs (filters expanded by default for quick access).
+    commandPaletteExpandedIds: new Set(['filters', 'actions']), // 📖 Expanded category IDs (filters + actions open by default for quick access).
     helpVisible: false,           // 📖 Whether the help overlay (K key) is active
     settingsScrollOffset: 0,      // 📖 Vertical scroll offset for Settings overlay viewport
     helpScrollOffset: 0,          // 📖 Vertical scroll offset for Help overlay viewport
-    // 📖 Install Endpoints overlay state (Y key opens it)
+    // 📖 Install Endpoints overlay state (opened from Settings or Command Palette)
     installEndpointsOpen: false,  // 📖 Whether the install-endpoints overlay is active
     installEndpointsPhase: 'providers', // 📖 providers | tools | scope | models | result
     installEndpointsCursor: 0,    // 📖 Selected row within the current install phase
@@ -678,8 +679,8 @@ export async function runApp(cliArgs, config) {
     const activeTier = TIER_CYCLE[state.tierFilterMode]
     const activeOrigin = ORIGIN_CYCLE[state.originFilterMode]
     state.results.forEach(r => {
-      // 📖 Favorites stay visible and pinned regardless of configured-only, tier, or provider filters.
-      if (r.isFavorite) {
+      // 📖 Sticky-favorites mode keeps favorites visible regardless of configured-only, tier, or provider filters.
+      if (state.favoritesPinnedAndSticky && r.isFavorite) {
         r.hidden = false
         return
       }
@@ -825,7 +826,7 @@ export async function runApp(cliArgs, config) {
   if (cliArgs.tierFilter) {
     const allowed = TIER_LETTER_MAP[cliArgs.tierFilter]
     state.results.forEach(r => {
-      r.hidden = r.isFavorite ? false : !allowed.includes(r.tier)
+      r.hidden = (state.favoritesPinnedAndSticky && r.isFavorite) ? false : !allowed.includes(r.tier)
     })
   }
 
@@ -863,7 +864,9 @@ export async function runApp(cliArgs, config) {
     // 📖 Cache visible+sorted models each frame so Enter handler always matches the display
     if (!state.settingsOpen && !state.installEndpointsOpen && !state.toolInstallPromptOpen && !state.recommendOpen && !state.feedbackOpen && !state.changelogOpen && !state.commandPaletteOpen) {
       const visible = state.results.filter(r => !r.hidden)
-      state.visibleSorted = sortResultsWithPinnedFavorites(visible, state.sortColumn, state.sortDirection)
+      state.visibleSorted = sortResultsWithPinnedFavorites(visible, state.sortColumn, state.sortDirection, {
+        pinFavorites: state.favoritesPinnedAndSticky,
+      })
     }
     let tableContent = null
     if (state.commandPaletteOpen) {
@@ -896,7 +899,9 @@ export async function runApp(cliArgs, config) {
           state.settingsUpdateLatestVersion,
           false,
           state.startupLatestVersion,
-          state.versionAlertsEnabled
+          state.versionAlertsEnabled,
+          state.favoritesPinnedAndSticky,
+          state.customTextFilter
         )
       }
       tableContent = state.commandPaletteFrozenTable
@@ -928,7 +933,9 @@ export async function runApp(cliArgs, config) {
         state.settingsUpdateLatestVersion,
         false,
         state.startupLatestVersion,
-        state.versionAlertsEnabled
+        state.versionAlertsEnabled,
+        state.favoritesPinnedAndSticky,
+        state.customTextFilter
       )
     }
 
@@ -964,9 +971,11 @@ export async function runApp(cliArgs, config) {
 
   // 📖 Populate visibleSorted before the first frame so Enter works immediately
   const initialVisible = state.results.filter(r => !r.hidden)
-  state.visibleSorted = sortResultsWithPinnedFavorites(initialVisible, state.sortColumn, state.sortDirection)
+  state.visibleSorted = sortResultsWithPinnedFavorites(initialVisible, state.sortColumn, state.sortDirection, {
+    pinFavorites: state.favoritesPinnedAndSticky,
+  })
 
-  process.stdout.write(ALT_HOME + renderTable(state.results, state.pendingPings, state.frame, state.cursor, state.sortColumn, state.sortDirection, state.pingInterval, state.lastPingTime, state.mode, state.tierFilterMode, state.scrollOffset, state.terminalRows, state.terminalCols, state.originFilterMode, null, state.pingMode, state.pingModeSource, state.hideUnconfiguredModels, state.widthWarningStartedAt, state.widthWarningDismissed, state.widthWarningShowCount, state.settingsUpdateState, state.settingsUpdateLatestVersion, false, state.startupLatestVersion, state.versionAlertsEnabled))
+  process.stdout.write(ALT_HOME + renderTable(state.results, state.pendingPings, state.frame, state.cursor, state.sortColumn, state.sortDirection, state.pingInterval, state.lastPingTime, state.mode, state.tierFilterMode, state.scrollOffset, state.terminalRows, state.terminalCols, state.originFilterMode, null, state.pingMode, state.pingModeSource, state.hideUnconfiguredModels, state.widthWarningStartedAt, state.widthWarningDismissed, state.widthWarningShowCount, state.settingsUpdateState, state.settingsUpdateLatestVersion, false, state.startupLatestVersion, state.versionAlertsEnabled, state.favoritesPinnedAndSticky, state.customTextFilter))
   if (process.stdout.isTTY) {
     process.stdout.flush && process.stdout.flush()
   }

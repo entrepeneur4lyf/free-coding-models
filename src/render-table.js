@@ -13,7 +13,8 @@
  *   - Emoji-aware padding via padEndDisplay for aligned verdict/status cells
  *   - Viewport clipping with above/below indicators
  *   - Smart badges (mode, tier filter, origin filter)
- *   - Install-endpoints shortcut surfaced directly in the footer hints
+ *   - Favorites mode hint surfaced directly in footer hints (`Y`)
+ *   - High-visibility active text-filter banner with one-key clear action (`X`)
  *   - Full-width red outdated-version banner when a newer npm release is known
  *   - Distinct auth-failure vs missing-key health labels so configured providers stay honest
  *
@@ -66,7 +67,7 @@ export const PROVIDER_COLOR = new Proxy({}, {
 })
 
 // ─── renderTable: mode param controls footer hint text (opencode vs openclaw) ─────────
-export function renderTable(results, pendingPings, frame, cursor = null, sortColumn = 'avg', sortDirection = 'asc', pingInterval = PING_INTERVAL, lastPingTime = Date.now(), mode = 'opencode', tierFilterMode = 0, scrollOffset = 0, terminalRows = 0, terminalCols = 0, originFilterMode = 0, legacyStatus = null, pingMode = 'normal', pingModeSource = 'auto', hideUnconfiguredModels = false, widthWarningStartedAt = null, widthWarningDismissed = false, widthWarningShowCount = 0, settingsUpdateState = 'idle', settingsUpdateLatestVersion = null, legacyFlag = false, startupLatestVersion = null, versionAlertsEnabled = true) {
+export function renderTable(results, pendingPings, frame, cursor = null, sortColumn = 'avg', sortDirection = 'asc', pingInterval = PING_INTERVAL, lastPingTime = Date.now(), mode = 'opencode', tierFilterMode = 0, scrollOffset = 0, terminalRows = 0, terminalCols = 0, originFilterMode = 0, legacyStatus = null, pingMode = 'normal', pingModeSource = 'auto', hideUnconfiguredModels = false, widthWarningStartedAt = null, widthWarningDismissed = false, widthWarningShowCount = 0, settingsUpdateState = 'idle', settingsUpdateLatestVersion = null, legacyFlag = false, startupLatestVersion = null, versionAlertsEnabled = true, favoritesPinnedAndSticky = false, customTextFilter = null) {
   // 📖 Filter out hidden models for display
   const visibleResults = results.filter(r => !r.hidden)
 
@@ -237,7 +238,9 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
   }
 
   // 📖 Sort models using the shared helper
-  const sorted = sortResultsWithPinnedFavorites(visibleResults, sortColumn, sortDirection)
+  const sorted = sortResultsWithPinnedFavorites(visibleResults, sortColumn, sortDirection, {
+    pinFavorites: favoritesPinnedAndSticky,
+  })
 
   const lines = [
     `  ${themeColors.accentBold(`🚀 free-coding-models v${LOCAL_VERSION}`)}${modeBadge}${pingControlBadge}${tierBadge}${originBadge}${chalk.reset('')}   ` +
@@ -339,6 +342,7 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
   }
 
   // 📖 Viewport clipping: only render models that fit on screen
+  const hasCustomFilter = typeof customTextFilter === 'string' && customTextFilter.trim().length > 0
   const extraFooterLines = versionStatus.isOutdated ? 1 : 0
   const vp = calculateViewport(terminalRows, scrollOffset, sorted.length, extraFooterLines)
   const paintSweScore = (score, paddedText) => {
@@ -618,9 +622,13 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
   // 📖 states are obvious even when the user misses the smaller header badges.
   const configuredBadgeBg = getTheme() === 'dark' ? [52, 120, 88] : [195, 234, 206]
   const activeHotkey = (keyLabel, text, bg) => themeColors.badge(`${keyLabel}${text}`, bg, getReadableTextRgb(bg))
+  const favoritesModeBg = favoritesPinnedAndSticky ? [157, 122, 48] : [95, 95, 95]
+  const favoritesModeLabel = favoritesPinnedAndSticky ? ' Favorites Pinned' : ' Favorites Normal'
   // 📖 Line 1: core navigation + filtering shortcuts
   lines.push(
     '  ' + hotkey('F', ' Toggle Favorite') +
+    themeColors.dim(`  •  `) +
+    activeHotkey('Y', favoritesModeLabel, favoritesModeBg) +
     themeColors.dim(`  •  `) +
     (tierFilterMode > 0
       ? activeHotkey('T', ` Tier (${activeTierLabel})`, getTierRgb(activeTierLabel))
@@ -673,9 +681,29 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
     lines.push(chalk.bgRed.white.bold(paddedBanner))
   }
 
-  // 📖 Final footer line: changelog shortcut + exit hint (replaces the old proxy notice).
+  // 📖 Final footer line: changelog + optional active text-filter badge + exit hint.
+  let filterBadge = ''
+  if (hasCustomFilter) {
+    const normalizedFilter = customTextFilter.trim().replace(/\s+/g, ' ')
+    const filterPrefix = 'X Disable filter: "'
+    const filterSuffix = '"'
+    const separatorPlain = '  •  '
+    const baseFooterPlain = '  N Changelog' + separatorPlain + 'Ctrl+C Exit'
+    const baseBadgeWidth = displayWidth(` ${filterPrefix}${filterSuffix} `)
+    const availableFilterWidth = terminalCols > 0
+      ? Math.max(8, terminalCols - displayWidth(baseFooterPlain) - displayWidth(separatorPlain) - baseBadgeWidth)
+      : normalizedFilter.length
+    const visibleFilter = normalizedFilter.length > availableFilterWidth
+      ? `${normalizedFilter.slice(0, Math.max(3, availableFilterWidth - 3))}...`
+      : normalizedFilter
+    filterBadge = chalk.bgYellow.black.bold(` ${filterPrefix}${visibleFilter}${filterSuffix} `)
+  }
+
   lines.push(
     '  ' + themeColors.hotkey('N') + themeColors.dim(' Changelog') +
+    (filterBadge
+      ? themeColors.dim('  •  ') + filterBadge
+      : '') +
     themeColors.dim('  •  ') +
     themeColors.dim('Ctrl+C Exit')
   )

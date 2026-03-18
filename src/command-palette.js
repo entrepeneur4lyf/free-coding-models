@@ -15,6 +15,72 @@
  * @see src/overlays.js
  */
 
+import { TOOL_METADATA, TOOL_MODE_ORDER } from './tool-metadata.js'
+
+const TOOL_MODE_DESCRIPTIONS = {
+  opencode: 'Launch in OpenCode CLI with the selected model.',
+  'opencode-desktop': 'Set model in shared config, then open OpenCode Desktop.',
+  openclaw: 'Set default model in OpenClaw and launch it.',
+  crush: 'Launch Crush with this provider/model pair.',
+  goose: 'Launch Goose and preselect the active model.',
+  pi: 'Launch Pi with model/provider flags.',
+  aider: 'Launch Aider configured on the selected model.',
+  qwen: 'Launch Qwen Code using the selected provider model.',
+  openhands: 'Launch OpenHands with the selected model endpoint.',
+  amp: 'Launch Amp with this model as active target.',
+}
+
+const TOOL_MODE_COMMANDS = TOOL_MODE_ORDER.map((toolMode) => {
+  const meta = TOOL_METADATA[toolMode] || { label: toolMode, emoji: '🧰' }
+  return {
+    id: `action-set-tool-${toolMode}`,
+    label: meta.label,
+    toolMode,
+    icon: meta.emoji,
+    description: TOOL_MODE_DESCRIPTIONS[toolMode] || 'Set this as the active launch target.',
+    keywords: ['tool', 'target', 'mode', toolMode, meta.label.toLowerCase()],
+  }
+})
+
+const PING_MODE_COMMANDS = [
+  {
+    id: 'action-cycle-ping-mode',
+    label: 'Cycle ping mode',
+    shortcut: 'W',
+    icon: '⚡',
+    description: 'Rotate speed → normal → slow → forced.',
+    keywords: ['ping', 'mode', 'cycle', 'speed', 'normal', 'slow', 'forced'],
+  },
+  {
+    id: 'action-set-ping-speed',
+    label: 'Speed mode (2s)',
+    pingMode: 'speed',
+    description: 'Fast 2s bursts for short live checks.',
+    keywords: ['ping', 'mode', 'speed', '2s', 'fast'],
+  },
+  {
+    id: 'action-set-ping-normal',
+    label: 'Normal mode (10s)',
+    pingMode: 'normal',
+    description: 'Balanced default cadence for daily use.',
+    keywords: ['ping', 'mode', 'normal', '10s', 'default'],
+  },
+  {
+    id: 'action-set-ping-slow',
+    label: 'Slow mode (30s)',
+    pingMode: 'slow',
+    description: 'Lower refresh cost when you are mostly idle.',
+    keywords: ['ping', 'mode', 'slow', '30s', 'idle'],
+  },
+  {
+    id: 'action-set-ping-forced',
+    label: 'Forced mode (4s)',
+    pingMode: 'forced',
+    description: 'Keeps 4s cadence until manually changed.',
+    keywords: ['ping', 'mode', 'forced', '4s', 'manual'],
+  },
+]
+
 // 📖 Base command tree template (will be enhanced with dynamic model list)
 const BASE_COMMAND_TREE = [
   {
@@ -93,6 +159,41 @@ const BASE_COMMAND_TREE = [
       { id: 'sort-uptime', label: 'Sort by uptime', shortcut: 'U', description: 'Success rate', keywords: ['sort', 'uptime'] },
     ]
   },
+  {
+    id: 'actions',
+    label: 'Actions',
+    icon: '⚙️',
+    children: [
+      {
+        id: 'action-target-tool',
+        label: 'Target tool',
+        icon: '🧰',
+        children: [
+          { id: 'action-cycle-tool-mode', label: 'Cycle target tool', shortcut: 'Z', icon: '🔄', description: 'Rotate through every launcher mode.', keywords: ['tool', 'mode', 'cycle', 'target'] },
+          ...TOOL_MODE_COMMANDS,
+        ],
+      },
+      {
+        id: 'action-ping-mode',
+        label: 'Ping mode',
+        icon: '📶',
+        children: PING_MODE_COMMANDS,
+      },
+      {
+        id: 'action-favorites-mode',
+        label: 'Favorites mode',
+        icon: '⭐',
+        children: [
+          { id: 'action-toggle-favorite-mode', label: 'Toggle favorites mode', shortcut: 'Y', icon: '⭐', description: 'Switch pinned+sticky ↔ normal list behavior.', keywords: ['favorite', 'favorites', 'mode', 'toggle', 'y'] },
+          { id: 'action-favorites-mode-pinned', label: 'Pinned + always visible', favoritesPinned: true, description: 'Favorites stay on top and bypass current filters.', keywords: ['favorite', 'favorites', 'pinned', 'sticky', 'always visible'] },
+          { id: 'action-favorites-mode-normal', label: 'Normal rows (starred only)', favoritesPinned: false, description: 'Favorites keep ⭐ but follow active filters and sort.', keywords: ['favorite', 'favorites', 'normal', 'sort', 'filter'] },
+          { id: 'action-toggle-favorite', label: 'Toggle favorite on selected row', shortcut: 'F', icon: '⭐', description: 'Star/unstar the highlighted model.', keywords: ['favorite', 'star', 'toggle'] },
+        ],
+      },
+      { id: 'action-cycle-theme', label: 'Cycle theme', shortcut: 'G', icon: '🌗', description: 'Switch dark/light/auto', keywords: ['theme', 'dark', 'light', 'auto'] },
+      { id: 'action-reset-view', label: 'Reset view', shortcut: 'Shift+R', icon: '🔄', description: 'Reset filters and sort', keywords: ['reset', 'view', 'sort', 'filters'] },
+    ],
+  },
   // 📖 Pages - directly at root level, not in submenu
   { id: 'open-settings', label: 'Settings', shortcut: 'P', icon: '⚙️', type: 'page', description: 'API keys and preferences', keywords: ['settings', 'config', 'api key'] },
   { id: 'open-help', label: 'Help', shortcut: 'K', icon: '❓', type: 'page', description: 'Show all shortcuts', keywords: ['help', 'shortcuts', 'hotkeys'] },
@@ -100,12 +201,6 @@ const BASE_COMMAND_TREE = [
   { id: 'open-feedback', label: 'Feedback', shortcut: 'I', icon: '📝', type: 'page', description: 'Report bugs or requests', keywords: ['feedback', 'bug', 'request'] },
   { id: 'open-recommend', label: 'Smart recommend', shortcut: 'Q', icon: '🎯', type: 'page', description: 'Find best model for task', keywords: ['recommend', 'best model'] },
   { id: 'open-install-endpoints', label: 'Install endpoints', icon: '🔌', type: 'page', description: 'Install provider catalogs', keywords: ['install', 'endpoints', 'providers'] },
-  // 📖 Actions - directly at root level, not in submenu
-  { id: 'action-cycle-theme', label: 'Cycle theme', shortcut: 'G', icon: '🌗', type: 'action', description: 'Switch dark/light/auto', keywords: ['theme', 'dark', 'light', 'auto'] },
-  { id: 'action-cycle-tool-mode', label: 'Target Tool', shortcut: 'Z', icon: '🔄', type: 'action', description: 'Change target AI Coding CLI Tool.', keywords: ['tool', 'mode', 'launcher', 'target'] },
-  { id: 'action-cycle-ping-mode', label: 'Cycle ping mode', shortcut: 'W', icon: '⚡', type: 'action', description: 'Adjust ping speed', keywords: ['ping', 'cadence', 'speed', 'slow'] },
-  { id: 'action-toggle-favorite', label: 'Toggle favorite', shortcut: 'F', icon: '⭐', type: 'action', description: 'Pin to favorites', keywords: ['favorite', 'star'] },
-  { id: 'action-reset-view', label: 'Reset view', shortcut: 'Shift+R', icon: '🔄', type: 'action', description: 'Reset filters and sort', keywords: ['reset', 'view', 'sort', 'filters'] },
 ]
 
 /**
