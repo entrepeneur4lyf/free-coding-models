@@ -43,7 +43,7 @@ import {
   PING_INTERVAL,
   FRAMES
 } from './constants.js'
-import { themeColors } from './theme.js'
+import { themeColors, getProviderRgb, getTierRgb, getReadableTextRgb, getTheme } from './theme.js'
 import { TIER_COLOR } from './tier-colors.js'
 import { getAvg, getVerdict, getUptime, getStabilityScore, getVersionStatusInfo } from './utils.js'
 import { usagePlaceholderForProvider } from './ping.js'
@@ -51,27 +51,7 @@ import { formatTokenTotalCompact } from './token-usage-reader.js'
 import { calculateViewport, sortResultsWithPinnedFavorites, padEndDisplay, displayWidth } from './render-helpers.js'
 import { getToolMeta } from './tool-metadata.js'
 import { PROXY_DISABLED_NOTICE } from './product-flags.js'
-
-const ACTIVE_FILTER_BG_BY_TIER = {
-  'S+': [57, 255, 20],
-  'S': [57, 255, 20],
-  'A+': [160, 255, 60],
-  'A': [255, 224, 130],
-  'A-': [255, 204, 128],
-  'B+': [255, 171, 64],
-  'B': [239, 83, 80],
-  'C': [186, 104, 200],
-}
-
-// 📖 Import UI configuration for consistent styling
-import { VERTICAL_SEPARATOR, COLUMN_SPACING } from './ui-config.js';
-
-// 📖 Column separator (vertical bar) is now defined in ui-config.js
-// const VERTICAL_SEPARATOR = chalk.rgb(255, 140, 0).dim('│');
-// const COL_SEP = ` ${VERTICAL_SEPARATOR} `; // Replaced by imported COLUMN_SPACING
-
-// 📖 Column spacing is now defined in ui-config.js
-const COL_SEP = COLUMN_SPACING;
+import { getColumnSpacing } from './ui-config.js'
 
 const require = createRequire(import.meta.url)
 const { version: LOCAL_VERSION } = require('../package.json')
@@ -79,28 +59,12 @@ const { version: LOCAL_VERSION } = require('../package.json')
 // 📖 Provider column palette: soft pastel rainbow so each provider stays easy
 // 📖 to spot without turning the table into a harsh neon wall.
 // 📖 Exported for use in overlays (settings screen) and logs.
-export const PROVIDER_COLOR = {
-  nvidia: [178, 235, 190],
-  groq: [255, 204, 188],
-  cerebras: [179, 229, 252],
-  sambanova: [255, 224, 178],
-  openrouter: [225, 190, 231],
-  huggingface: [255, 245, 157],
-  replicate: [187, 222, 251],
-  deepinfra: [178, 223, 219],
-  fireworks: [255, 205, 210],
-  codestral: [248, 187, 208],
-  hyperbolic: [255, 171, 145],
-  scaleway: [129, 212, 250],
-  googleai: [187, 222, 251],
-  siliconflow: [178, 235, 242],
-  together: [255, 241, 118],
-  cloudflare: [255, 204, 128],
-  perplexity: [244, 143, 177],
-  qwen: [255, 224, 130],
-  zai: [174, 213, 255],
-  iflow: [220, 231, 117],
-}
+export const PROVIDER_COLOR = new Proxy({}, {
+  get(_target, providerKey) {
+    if (typeof providerKey !== 'string') return undefined
+    return getProviderRgb(providerKey)
+  },
+})
 
 // ─── renderTable: mode param controls footer hint text (opencode vs openclaw) ─────────
 export function renderTable(results, pendingPings, frame, cursor = null, sortColumn = 'avg', sortDirection = 'asc', pingInterval = PING_INTERVAL, lastPingTime = Date.now(), mode = 'opencode', tierFilterMode = 0, scrollOffset = 0, terminalRows = 0, terminalCols = 0, originFilterMode = 0, legacyStatus = null, pingMode = 'normal', pingModeSource = 'auto', hideUnconfiguredModels = false, widthWarningStartedAt = null, widthWarningDismissed = false, widthWarningShowCount = 0, settingsUpdateState = 'idle', settingsUpdateLatestVersion = null, legacyFlag = false, startupLatestVersion = null, versionAlertsEnabled = true, disableWidthsWarning = false) {
@@ -122,23 +86,23 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
 
   const intervalSec = Math.round(pingInterval / 1000)
   const pingModeMeta = {
-    speed: { label: 'fast', color: chalk.bold.rgb(255, 210, 80) },
-    normal: { label: 'normal', color: chalk.bold.rgb(120, 210, 255) },
-    slow: { label: 'slow', color: chalk.bold.rgb(255, 170, 90) },
-    forced: { label: 'forced', color: chalk.bold.rgb(255, 120, 120) },
+    speed: { label: 'fast', color: themeColors.warningBold },
+    normal: { label: 'normal', color: themeColors.accentBold },
+    slow: { label: 'slow', color: themeColors.info },
+    forced: { label: 'forced', color: themeColors.errorBold },
   }
   const activePingMode = pingModeMeta[pingMode] ?? pingModeMeta.normal
   const pingProgressText = `${completedPings}/${totalVisible}`
   const nextCountdownColor = secondsUntilNext > 8
-    ? chalk.red.bold
+    ? themeColors.errorBold
     : secondsUntilNext >= 4
-      ? chalk.yellow.bold
+      ? themeColors.warningBold
       : secondsUntilNext < 1
-        ? chalk.greenBright.bold
-        : chalk.green.bold
+        ? themeColors.successBold
+        : themeColors.success
   const pingControlBadge =
     activePingMode.color(' [ ') +
-    chalk.yellow.bold('W') +
+    themeColors.hotkey('W') +
     activePingMode.color(` Ping Interval : ${intervalSec}s (${activePingMode.label}) - ${pingProgressText} - next : `) +
     nextCountdownColor(`${secondsUntilNextLabel}s`) +
     activePingMode.color(' ]')
@@ -146,11 +110,9 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
   // 📖 Tool badge keeps the active launch target visible in the header, so the
   // 📖 footer no longer needs a redundant Enter action or mode toggle reminder.
   const toolMeta = getToolMeta(mode)
-  const toolBadgeColor = mode === 'openclaw'
-    ? chalk.bold.rgb(255, 100, 50)
-    : chalk.bold.rgb(0, 200, 255)
-  const modeBadge = toolBadgeColor(' [ ') + chalk.yellow.bold('Z') + toolBadgeColor(` Tool : ${toolMeta.label} ]`)
-  const activeHeaderBadge = (text, bg = [57, 255, 20], fg = [0, 0, 0]) => chalk.bgRgb(...bg).rgb(...fg).bold(` ${text} `)
+  const toolBadgeColor = mode === 'openclaw' ? themeColors.warningBold : themeColors.accentBold
+  const modeBadge = toolBadgeColor(' [ ') + themeColors.hotkey('Z') + toolBadgeColor(` Tool : ${toolMeta.label} ]`)
+  const activeHeaderBadge = (text, bg) => themeColors.badge(text, bg, getReadableTextRgb(bg))
   const versionStatus = getVersionStatusInfo(settingsUpdateState, settingsUpdateLatestVersion, startupLatestVersion, versionAlertsEnabled)
 
   // 📖 Tier filter badge shown when filtering is active (shows exact tier name)
@@ -159,7 +121,7 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
   let activeTierLabel = ''
   if (tierFilterMode > 0) {
     activeTierLabel = TIER_CYCLE_NAMES[tierFilterMode]
-    const tierBg = ACTIVE_FILTER_BG_BY_TIER[activeTierLabel] || [57, 255, 20]
+    const tierBg = getTierRgb(activeTierLabel)
     tierBadge = ` ${activeHeaderBadge(`TIER (${activeTierLabel})`, tierBg)}`
   }
 
@@ -178,13 +140,12 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
     if (activeOriginName) {
       activeOriginLabel = normalizeOriginLabel(activeOriginName, activeOriginKey)
       const providerRgb = PROVIDER_COLOR[activeOriginKey] || [255, 255, 255]
-      originBadge = ` ${activeHeaderBadge(`PROVIDER (${activeOriginLabel})`, [0, 0, 0], providerRgb)}`
+      originBadge = ` ${activeHeaderBadge(`PROVIDER (${activeOriginLabel})`, providerRgb)}`
     }
   }
 
-
-
   // 📖 Column widths (generous spacing with margins)
+  const COL_SEP = getColumnSpacing()
   const W_RANK = 6
   const W_TIER = 6
   const W_CTX = 6
@@ -215,18 +176,18 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
     const padLeft2 = Math.max(0, Math.floor((terminalCols - warning2.length) / 2))
     const padLeft3 = Math.max(0, Math.floor((terminalCols - warning3.length) / 2))
     for (let i = 0; i < blankLines; i++) lines.push('')
-    lines.push(' '.repeat(padLeft) + chalk.red.bold(warning))
+    lines.push(' '.repeat(padLeft) + themeColors.errorBold(warning))
     lines.push('')
-    lines.push(' '.repeat(padLeft2) + chalk.red(warning2))
+    lines.push(' '.repeat(padLeft2) + themeColors.error(warning2))
     lines.push('')
-    lines.push(' '.repeat(padLeft3) + chalk.red(warning3))
+    lines.push(' '.repeat(padLeft3) + themeColors.error(warning3))
     lines.push('')
-    lines.push(' '.repeat(Math.max(0, Math.floor((terminalCols - 34) / 2))) + chalk.yellow(`this message will hide in ${(remainingMs / 1000).toFixed(1)}s`))
+    lines.push(' '.repeat(Math.max(0, Math.floor((terminalCols - 34) / 2))) + themeColors.warning(`this message will hide in ${(remainingMs / 1000).toFixed(1)}s`))
     const barTotal = Math.max(0, Math.min(terminalCols - 4, 30))
     const barFill = Math.round((elapsed / warningDurationMs) * barTotal)
-    const barStr = chalk.green('█'.repeat(barFill)) + chalk.dim('░'.repeat(barTotal - barFill))
+    const barStr = themeColors.success('█'.repeat(barFill)) + themeColors.dim('░'.repeat(barTotal - barFill))
     lines.push(' '.repeat(Math.max(0, Math.floor((terminalCols - barTotal) / 2))) + barStr)
-    lines.push(' '.repeat(Math.max(0, Math.floor((terminalCols - 20) / 2))) + chalk.dim('press esc to dismiss'))
+    lines.push(' '.repeat(Math.max(0, Math.floor((terminalCols - 20) / 2))) + themeColors.dim('press esc to dismiss'))
     while (terminalRows > 0 && lines.length < terminalRows) lines.push('')
     const EL = '\x1b[K'
     return lines.map(line => line + EL).join('\n')
@@ -236,11 +197,11 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
   const sorted = sortResultsWithPinnedFavorites(visibleResults, sortColumn, sortDirection)
 
   const lines = [
-    `  ${chalk.cyanBright.bold(`🚀 free-coding-models v${LOCAL_VERSION}`)}${modeBadge}${pingControlBadge}${tierBadge}${originBadge}${chalk.reset('')}   ` +
-      chalk.dim('📦 ') + chalk.cyanBright.bold(`${completedPings}/${totalVisible}`) + chalk.dim('  ') +
-      chalk.greenBright(`✅ ${up}`) + chalk.dim(' up  ') +
-      chalk.yellow(`⏳ ${timeout}`) + chalk.dim(' timeout  ') +
-      chalk.red(`❌ ${down}`) + chalk.dim(' down  ') +
+    `  ${themeColors.accentBold(`🚀 free-coding-models v${LOCAL_VERSION}`)}${modeBadge}${pingControlBadge}${tierBadge}${originBadge}${chalk.reset('')}   ` +
+      themeColors.dim('📦 ') + themeColors.accentBold(`${completedPings}/${totalVisible}`) + themeColors.dim('  ') +
+      themeColors.success(`✅ ${up}`) + themeColors.dim(' up  ') +
+      themeColors.warning(`⏳ ${timeout}`) + themeColors.dim(' timeout  ') +
+      themeColors.error(`❌ ${down}`) + themeColors.dim(' down  ') +
       '',
     '',
   ]
@@ -263,16 +224,15 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
   const stabH    = sortColumn === 'stability' ? dir + ' Stability' : 'Stability'
   const uptimeH  = sortColumn === 'uptime' ? dir + ' Up%' : 'Up%'
   const tokensH  = 'Used'
-  const usageH   = sortColumn === 'usage' ? dir + ' Usage' : 'Usage'
 
   // 📖 Helper to colorize first letter for keyboard shortcuts
   // 📖 IMPORTANT: Pad PLAIN TEXT first, then apply colors to avoid alignment issues
-  const colorFirst = (text, width, colorFn = chalk.yellow) => {
+  const colorFirst = (text, width, colorFn = themeColors.hotkey) => {
     const first = text[0]
     const rest = text.slice(1)
     const plainText = first + rest
     const padding = ' '.repeat(Math.max(0, width - plainText.length))
-    return colorFn(first) + chalk.dim(rest + padding)
+    return colorFn(first) + themeColors.dim(rest + padding)
   }
 
   // 📖 Now colorize after padding is calculated on plain text
@@ -280,33 +240,33 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
   const tierH_c    = colorFirst('Tier', W_TIER)
   const originLabel = 'Provider'
   const originH_c  = sortColumn === 'origin'
-    ? chalk.bold.cyan(originLabel.padEnd(W_SOURCE))
-    : (originFilterMode > 0 ? chalk.bold.rgb(100, 200, 255)(originLabel.padEnd(W_SOURCE)) : (() => {
+    ? themeColors.accentBold(originLabel.padEnd(W_SOURCE))
+    : (originFilterMode > 0 ? themeColors.accentBold(originLabel.padEnd(W_SOURCE)) : (() => {
       // 📖 Provider keeps O for sorting and D for provider-filter cycling.
       const plain = 'PrOviDer'
       const padding = ' '.repeat(Math.max(0, W_SOURCE - plain.length))
-      return chalk.dim('Pr') + chalk.yellow.bold('O') + chalk.dim('vi') + chalk.yellow.bold('D') + chalk.dim('er' + padding)
+      return themeColors.dim('Pr') + themeColors.hotkey('O') + themeColors.dim('vi') + themeColors.hotkey('D') + themeColors.dim('er' + padding)
     })())
   const modelH_c   = colorFirst(modelH, W_MODEL)
-  const sweH_c     = sortColumn === 'swe' ? chalk.bold.cyan(sweH.padEnd(W_SWE)) : colorFirst(sweH, W_SWE)
-  const ctxH_c     = sortColumn === 'ctx' ? chalk.bold.cyan(ctxH.padEnd(W_CTX)) : colorFirst(ctxH, W_CTX)
-  const pingH_c    = sortColumn === 'ping' ? chalk.bold.cyan(pingH.padEnd(W_PING)) : colorFirst('Latest Ping', W_PING)
-  const avgH_c     = sortColumn === 'avg' ? chalk.bold.cyan(avgH.padEnd(W_AVG)) : colorFirst('Avg Ping', W_AVG)
-  const healthH_c  = sortColumn === 'condition' ? chalk.bold.cyan(healthH.padEnd(W_STATUS)) : colorFirst('Health', W_STATUS)
-  const verdictH_c = sortColumn === 'verdict' ? chalk.bold.cyan(verdictH.padEnd(W_VERDICT)) : colorFirst(verdictH, W_VERDICT)
+  const sweH_c     = sortColumn === 'swe' ? themeColors.accentBold(sweH.padEnd(W_SWE)) : colorFirst(sweH, W_SWE)
+  const ctxH_c     = sortColumn === 'ctx' ? themeColors.accentBold(ctxH.padEnd(W_CTX)) : colorFirst(ctxH, W_CTX)
+  const pingH_c    = sortColumn === 'ping' ? themeColors.accentBold(pingH.padEnd(W_PING)) : colorFirst('Latest Ping', W_PING)
+  const avgH_c     = sortColumn === 'avg' ? themeColors.accentBold(avgH.padEnd(W_AVG)) : colorFirst('Avg Ping', W_AVG)
+  const healthH_c  = sortColumn === 'condition' ? themeColors.accentBold(healthH.padEnd(W_STATUS)) : colorFirst('Health', W_STATUS)
+  const verdictH_c = sortColumn === 'verdict' ? themeColors.accentBold(verdictH.padEnd(W_VERDICT)) : colorFirst(verdictH, W_VERDICT)
   // 📖 Custom colorization for Stability: highlight 'B' (the sort key) since 'S' is taken by SWE
-  const stabH_c    = sortColumn === 'stability' ? chalk.bold.cyan(stabH.padEnd(W_STAB)) : (() => {
+  const stabH_c    = sortColumn === 'stability' ? themeColors.accentBold(stabH.padEnd(W_STAB)) : (() => {
     const plain = 'Stability'
     const padding = ' '.repeat(Math.max(0, W_STAB - plain.length))
-    return chalk.dim('Sta') + chalk.yellow.bold('B') + chalk.dim('ility' + padding)
+    return themeColors.dim('Sta') + themeColors.hotkey('B') + themeColors.dim('ility' + padding)
   })()
   // 📖 Up% sorts on U, so keep the highlighted shortcut in the shared yellow sort-key color.
-  const uptimeH_c  = sortColumn === 'uptime' ? chalk.bold.cyan(uptimeH.padEnd(W_UPTIME)) : (() => {
+  const uptimeH_c  = sortColumn === 'uptime' ? themeColors.accentBold(uptimeH.padEnd(W_UPTIME)) : (() => {
     const plain = 'Up%'
     const padding = ' '.repeat(Math.max(0, W_UPTIME - plain.length))
-    return chalk.yellow.bold('U') + chalk.dim('p%' + padding)
+    return themeColors.hotkey('U') + themeColors.dim('p%' + padding)
   })()
-  const tokensH_c  = chalk.dim(tokensH.padEnd(W_TOKENS))
+  const tokensH_c  = themeColors.dim(tokensH.padEnd(W_TOKENS))
   // 📖 Usage column removed from UI – no header or separator for it.
   // Header without Usage column (column order: Rank, Tier, SWE%, CTX, Model, Provider, Latest Ping, Avg Ping, Health, Verdict, Stability, Up%, Used)
   lines.push('  ' + rankH_c + COL_SEP + tierH_c + COL_SEP + sweH_c + COL_SEP + ctxH_c + COL_SEP + modelH_c + COL_SEP + originH_c + COL_SEP + pingH_c + COL_SEP + avgH_c + COL_SEP + healthH_c + COL_SEP + verdictH_c + COL_SEP + stabH_c + COL_SEP + uptimeH_c + COL_SEP + tokensH_c)
@@ -316,42 +276,50 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
   if (sorted.length === 0) {
     lines.push('')
     if (hideUnconfiguredModels) {
-      lines.push(`  ${chalk.redBright.bold('Press P to configure your API key.')}`)
-      lines.push(`  ${chalk.dim('No configured provider currently exposes visible models in the table.')}`)
+      lines.push(`  ${themeColors.errorBold('Press P to configure your API key.')}`)
+      lines.push(`  ${themeColors.dim('No configured provider currently exposes visible models in the table.')}`)
     } else {
-      lines.push(`  ${chalk.yellow.bold('No models match the current filters.')}`)
+      lines.push(`  ${themeColors.warningBold('No models match the current filters.')}`)
     }
   }
 
   // 📖 Viewport clipping: only render models that fit on screen
   const extraFooterLines = versionStatus.isOutdated ? 1 : 0
   const vp = calculateViewport(terminalRows, scrollOffset, sorted.length, extraFooterLines)
+  const paintSweScore = (score, paddedText) => {
+    if (score >= 70) return chalk.bold.rgb(...getTierRgb('S+'))(paddedText)
+    if (score >= 60) return chalk.bold.rgb(...getTierRgb('S'))(paddedText)
+    if (score >= 50) return chalk.bold.rgb(...getTierRgb('A+'))(paddedText)
+    if (score >= 40) return chalk.rgb(...getTierRgb('A'))(paddedText)
+    if (score >= 35) return chalk.rgb(...getTierRgb('A-'))(paddedText)
+    if (score >= 30) return chalk.rgb(...getTierRgb('B+'))(paddedText)
+    if (score >= 20) return chalk.rgb(...getTierRgb('B'))(paddedText)
+    return chalk.rgb(...getTierRgb('C'))(paddedText)
+  }
 
   if (vp.hasAbove) {
-    lines.push(chalk.dim(`  ... ${vp.startIdx} more above ...`))
+    lines.push(themeColors.dim(`  ... ${vp.startIdx} more above ...`))
   }
 
   for (let i = vp.startIdx; i < vp.endIdx; i++) {
     const r = sorted[i]
-    const tierFn = TIER_COLOR[r.tier] ?? (t => chalk.white(t))
+    const tierFn = TIER_COLOR[r.tier] ?? ((text) => themeColors.text(text))
 
     const isCursor = cursor !== null && i === cursor
 
     // 📖 Left-aligned columns - pad plain text first, then colorize
-    const num = chalk.dim(String(r.idx).padEnd(W_RANK))
+    const num = themeColors.dim(String(r.idx).padEnd(W_RANK))
     const tier = tierFn(r.tier.padEnd(W_TIER))
     // 📖 Keep terminal view provider-specific so each row is monitorable per provider
     const providerNameRaw = sources[r.providerKey]?.name ?? r.providerKey ?? 'NIM'
     const providerName = normalizeOriginLabel(providerNameRaw, r.providerKey)
-    const providerRgb = PROVIDER_COLOR[r.providerKey] ?? [105, 190, 245]
-    const source = chalk.rgb(...providerRgb)(providerName.padEnd(W_SOURCE))
+    const source = themeColors.provider(r.providerKey, providerName.padEnd(W_SOURCE))
     // 📖 Favorites: always reserve 2 display columns at the start of Model column.
     // 📖 🎯 (2 cols) for recommended, ⭐ (2 cols) for favorites, '  ' (2 spaces) for non-favorites — keeps alignment stable.
     const favoritePrefix = r.isRecommended ? '🎯' : r.isFavorite ? '⭐' : '  '
     const prefixDisplayWidth = 2
     const nameWidth = Math.max(0, W_MODEL - prefixDisplayWidth)
     const name = favoritePrefix + r.label.slice(0, nameWidth).padEnd(nameWidth)
-    const modelColor = chalk.rgb(...providerRgb)
     const sweScore = r.sweScore ?? '—'
     // 📖 SWE% colorized on the same gradient as Tier:
     //   ≥70% bright neon green (S+), ≥60% green (S), ≥50% yellow-green (A+),
@@ -359,27 +327,20 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
     //   ≥20% red (B), <20% dark red (C), '—' dim
     let sweCell
     if (sweScore === '—') {
-      sweCell = chalk.dim(sweScore.padEnd(W_SWE))
+      sweCell = themeColors.dim(sweScore.padEnd(W_SWE))
     } else {
       const sweVal = parseFloat(sweScore)
       const swePadded = sweScore.padEnd(W_SWE)
-      if (sweVal >= 70)      sweCell = chalk.bold.rgb(0,   255,  80)(swePadded)
-      else if (sweVal >= 60) sweCell = chalk.bold.rgb(80,  220,   0)(swePadded)
-      else if (sweVal >= 50) sweCell = chalk.bold.rgb(170, 210,   0)(swePadded)
-      else if (sweVal >= 40) sweCell = chalk.rgb(240, 190,   0)(swePadded)
-      else if (sweVal >= 35) sweCell = chalk.rgb(255, 130,   0)(swePadded)
-      else if (sweVal >= 30) sweCell = chalk.rgb(255,  70,   0)(swePadded)
-      else if (sweVal >= 20) sweCell = chalk.rgb(210,  20,   0)(swePadded)
-      else                   sweCell = chalk.rgb(140,   0,   0)(swePadded)
+      sweCell = paintSweScore(sweVal, swePadded)
     }
     
     // 📖 Context window column - colorized by size (larger = better)
     const ctxRaw = r.ctx ?? '—'
     const ctxCell = ctxRaw !== '—' && (ctxRaw.includes('128k') || ctxRaw.includes('200k') || ctxRaw.includes('1m'))
-      ? chalk.greenBright(ctxRaw.padEnd(W_CTX))
+      ? themeColors.metricGood(ctxRaw.padEnd(W_CTX))
       : ctxRaw !== '—' && (ctxRaw.includes('32k') || ctxRaw.includes('64k'))
-      ? chalk.cyan(ctxRaw.padEnd(W_CTX))
-      : chalk.dim(ctxRaw.padEnd(W_CTX))
+      ? themeColors.metricOk(ctxRaw.padEnd(W_CTX))
+      : themeColors.dim(ctxRaw.padEnd(W_CTX))
 
     // 📖 Keep the row-local spinner small and inline so users can still read the last measured latency.
     const buildLatestPingDisplay = (value) => {
@@ -393,18 +354,18 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
     let pingCell
     if (!latestPing) {
       const placeholder = r.isPinging ? buildLatestPingDisplay('———') : '———'.padEnd(W_PING)
-      pingCell = chalk.dim(placeholder)
+      pingCell = themeColors.dim(placeholder)
     } else if (latestPing.code === '200') {
       // 📖 Success - show response time
       const str = buildLatestPingDisplay(String(latestPing.ms))
-      pingCell = latestPing.ms < 500 ? chalk.greenBright(str) : latestPing.ms < 1500 ? chalk.yellow(str) : chalk.red(str)
+      pingCell = latestPing.ms < 500 ? themeColors.metricGood(str) : latestPing.ms < 1500 ? themeColors.metricWarn(str) : themeColors.metricBad(str)
     } else if (latestPing.code === '401') {
       // 📖 401 = no API key but server IS reachable — still show latency in dim
-      pingCell = chalk.dim(buildLatestPingDisplay(String(latestPing.ms)))
+      pingCell = themeColors.dim(buildLatestPingDisplay(String(latestPing.ms)))
     } else {
       // 📖 Error or timeout - show "———" (error code is already in Status column)
       const placeholder = r.isPinging ? buildLatestPingDisplay('———') : '———'.padEnd(W_PING)
-      pingCell = chalk.dim(placeholder)
+      pingCell = themeColors.dim(placeholder)
     }
 
     // 📖 Avg ping (just number, no "ms")
@@ -412,9 +373,9 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
     let avgCell
     if (avg !== Infinity) {
       const str = String(avg).padEnd(W_AVG)
-      avgCell = avg < 500 ? chalk.greenBright(str) : avg < 1500 ? chalk.yellow(str) : chalk.red(str)
+      avgCell = avg < 500 ? themeColors.metricGood(str) : avg < 1500 ? themeColors.metricWarn(str) : themeColors.metricBad(str)
     } else {
-      avgCell = chalk.dim('———'.padEnd(W_AVG))
+      avgCell = themeColors.dim('———'.padEnd(W_AVG))
     }
 
     // 📖 Status column - build plain text with emoji, pad, then colorize
@@ -423,21 +384,21 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
     if (r.status === 'noauth') {
       // 📖 Server responded but needs an API key — shown dimly since it IS reachable
       statusText = `🔑 NO KEY`
-      statusColor = (s) => chalk.dim(s)
+      statusColor = themeColors.dim
     } else if (r.status === 'auth_error') {
       // 📖 A key is configured but the provider rejected it — keep this distinct
       // 📖 from "no key" so configured-only mode does not look misleading.
       statusText = `🔐 AUTH FAIL`
-      statusColor = (s) => chalk.redBright(s)
+      statusColor = themeColors.errorBold
     } else if (r.status === 'pending') {
       statusText = `${FRAMES[frame % FRAMES.length]} wait`
-      statusColor = (s) => chalk.dim.yellow(s)
+      statusColor = themeColors.warning
     } else if (r.status === 'up') {
       statusText = `✅ UP`
-      statusColor = (s) => s
+      statusColor = themeColors.success
     } else if (r.status === 'timeout') {
       statusText = `⏳ TIMEOUT`
-      statusColor = (s) => chalk.yellow(s)
+      statusColor = themeColors.warning
     } else if (r.status === 'down') {
       const code = r.httpCode ?? 'ERR'
       // 📖 Different emojis for different error codes
@@ -457,10 +418,10 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
       }
       const emoji = errorEmojis[code] || '❌'
       statusText = `${emoji} ${errorLabels[code] || code}`
-      statusColor = (s) => chalk.red(s)
+      statusColor = themeColors.error
     } else {
       statusText = '?'
-      statusColor = (s) => chalk.dim(s)
+      statusColor = themeColors.dim
     }
     const status = statusColor(padEndDisplay(statusText, W_STATUS))
 
@@ -471,43 +432,43 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
     switch (verdict) {
       case 'Perfect':
         verdictText = 'Perfect 🚀'
-        verdictColor = (s) => chalk.bold.rgb(0, 255, 180)(s)    // bright cyan-green — stands out from Normal
+        verdictColor = themeColors.successBold
         break
       case 'Normal':
         verdictText = 'Normal ✅'
-        verdictColor = (s) => chalk.bold.rgb(140, 200, 0)(s)    // lime-yellow — clearly warmer than Perfect
+        verdictColor = themeColors.metricGood
         break
       case 'Spiky':
         verdictText = 'Spiky 📈'
-        verdictColor = (s) => chalk.bold.rgb(170, 210, 0)(s)    // A+ yellow-green
+        verdictColor = (text) => chalk.bold.rgb(...getTierRgb('A+'))(text)
         break
       case 'Slow':
         verdictText = 'Slow 🐢'
-        verdictColor = (s) => chalk.bold.rgb(255, 130, 0)(s)    // A- amber
+        verdictColor = (text) => chalk.bold.rgb(...getTierRgb('A-'))(text)
         break
       case 'Very Slow':
         verdictText = 'Very Slow 🐌'
-        verdictColor = (s) => chalk.bold.rgb(255, 70, 0)(s)     // B+ orange-red
+        verdictColor = (text) => chalk.bold.rgb(...getTierRgb('B+'))(text)
         break
       case 'Overloaded':
         verdictText = 'Overloaded 🔥'
-        verdictColor = (s) => chalk.bold.rgb(210, 20, 0)(s)     // B red
+        verdictColor = (text) => chalk.bold.rgb(...getTierRgb('B'))(text)
         break
       case 'Unstable':
         verdictText = 'Unstable ⚠️'
-        verdictColor = (s) => chalk.bold.rgb(175, 10, 0)(s)     // between B and C
+        verdictColor = themeColors.errorBold
         break
       case 'Not Active':
         verdictText = 'Not Active 👻'
-        verdictColor = (s) => chalk.dim(s)
+        verdictColor = themeColors.dim
         break
       case 'Pending':
         verdictText = 'Pending ⏳'
-        verdictColor = (s) => chalk.dim(s)
+        verdictColor = themeColors.dim
         break
       default:
         verdictText = 'Unusable 💀'
-        verdictColor = (s) => chalk.bold.rgb(140, 0, 0)(s)      // C dark red
+        verdictColor = (text) => chalk.bold.rgb(...getTierRgb('C'))(text)
         break
     }
     // 📖 Use padEndDisplay to account for emoji display width (2 cols each) so all rows align
@@ -518,15 +479,15 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
     const stabScore = getStabilityScore(r)
     let stabCell
     if (stabScore < 0) {
-      stabCell = chalk.dim('———'.padEnd(W_STAB))
+      stabCell = themeColors.dim('———'.padEnd(W_STAB))
     } else if (stabScore >= 80) {
-      stabCell = chalk.greenBright(String(stabScore).padEnd(W_STAB))
+      stabCell = themeColors.metricGood(String(stabScore).padEnd(W_STAB))
     } else if (stabScore >= 60) {
-      stabCell = chalk.cyan(String(stabScore).padEnd(W_STAB))
+      stabCell = themeColors.metricOk(String(stabScore).padEnd(W_STAB))
     } else if (stabScore >= 40) {
-      stabCell = chalk.yellow(String(stabScore).padEnd(W_STAB))
+      stabCell = themeColors.metricWarn(String(stabScore).padEnd(W_STAB))
     } else {
-      stabCell = chalk.red(String(stabScore).padEnd(W_STAB))
+      stabCell = themeColors.metricBad(String(stabScore).padEnd(W_STAB))
     }
 
     // 📖 Uptime column - percentage of successful pings
@@ -535,20 +496,20 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
     const uptimeStr = uptimePercent + '%'
     let uptimeCell
     if (uptimePercent >= 90) {
-      uptimeCell = chalk.greenBright(uptimeStr.padEnd(W_UPTIME))
+      uptimeCell = themeColors.metricGood(uptimeStr.padEnd(W_UPTIME))
     } else if (uptimePercent >= 70) {
-      uptimeCell = chalk.yellow(uptimeStr.padEnd(W_UPTIME))
+      uptimeCell = themeColors.metricWarn(uptimeStr.padEnd(W_UPTIME))
     } else if (uptimePercent >= 50) {
-      uptimeCell = chalk.rgb(255, 165, 0)(uptimeStr.padEnd(W_UPTIME)) // orange
+      uptimeCell = chalk.rgb(...getTierRgb('A-'))(uptimeStr.padEnd(W_UPTIME))
     } else {
-      uptimeCell = chalk.red(uptimeStr.padEnd(W_UPTIME))
+      uptimeCell = themeColors.metricBad(uptimeStr.padEnd(W_UPTIME))
     }
 
     // 📖 Model text now mirrors the provider hue so provider affinity is visible
     // 📖 even before the eye reaches the Provider column.
-    const nameCell = isCursor ? modelColor.bold(name) : modelColor(name)
+    const nameCell = themeColors.provider(r.providerKey, name, { bold: isCursor })
     const sourceCursorText = providerName.padEnd(W_SOURCE)
-    const sourceCell = isCursor ? chalk.rgb(...providerRgb).bold(sourceCursorText) : source
+    const sourceCell = isCursor ? themeColors.provider(r.providerKey, sourceCursorText, { bold: true }) : source
 
     // 📖 Usage column removed from UI – no usage data displayed.
     // (We keep the logic but do not render it.)
@@ -558,8 +519,8 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
     // 📖 exact provider/model pair, loaded from the local usage snapshot file at startup.
     const tokenTotal = Number(r.totalTokens) || 0
     const tokensCell = tokenTotal > 0
-      ? chalk.rgb(120, 210, 255)(formatTokenTotalCompact(tokenTotal).padEnd(W_TOKENS))
-      : chalk.dim('0'.padEnd(W_TOKENS))
+      ? themeColors.metricOk(formatTokenTotalCompact(tokenTotal).padEnd(W_TOKENS))
+      : themeColors.dim('0'.padEnd(W_TOKENS))
 
     // 📖 Build row with double space between columns (order: Rank, Tier, SWE%, CTX, Model, Provider, Latest Ping, Avg Ping, Health, Verdict, Stability, Up%, Used)
     const row = '  ' + num + COL_SEP + tier + COL_SEP + sweCell + COL_SEP + ctxCell + COL_SEP + nameCell + COL_SEP + sourceCell + COL_SEP + pingCell + COL_SEP + avgCell + COL_SEP + status + COL_SEP + speedCell + COL_SEP + stabCell + COL_SEP + uptimeCell + COL_SEP + tokensCell
@@ -577,62 +538,64 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
   }
 
   if (vp.hasBelow) {
-    lines.push(chalk.dim(`  ... ${sorted.length - vp.endIdx} more below ...`))
+    lines.push(themeColors.dim(`  ... ${sorted.length - vp.endIdx} more below ...`))
   }
 
    lines.push('')
   // 📖 Footer hints keep only navigation and secondary actions now that the
   // 📖 active tool target is already visible in the header badge.
-  const hotkey = (keyLabel, text) => chalk.yellow(keyLabel) + chalk.dim(text)
+  const hotkey = (keyLabel, text) => themeColors.hotkey(keyLabel) + themeColors.dim(text)
   // 📖 Active filter pills use a loud green background so tier/provider/configured-only
   // 📖 states are obvious even when the user misses the smaller header badges.
-  const activeHotkey = (keyLabel, text, bg = [57, 255, 20], fg = [0, 0, 0]) => chalk.bgRgb(...bg).rgb(...fg)(` ${keyLabel}${text} `)
+  const configuredBadgeBg = getTheme() === 'dark' ? [52, 120, 88] : [195, 234, 206]
+  const activeHotkey = (keyLabel, text, bg) => themeColors.badge(`${keyLabel}${text}`, bg, getReadableTextRgb(bg))
   // 📖 Line 1: core navigation + filtering shortcuts
   lines.push(
     hotkey('F', ' Toggle Favorite') +
-    chalk.dim(`  •  `) +
+    themeColors.dim(`  •  `) +
     (tierFilterMode > 0
-      ? activeHotkey('T', ` Tier (${activeTierLabel})`, ACTIVE_FILTER_BG_BY_TIER[activeTierLabel] || [57, 255, 20])
+      ? activeHotkey('T', ` Tier (${activeTierLabel})`, getTierRgb(activeTierLabel))
       : hotkey('T', ' Tier')) +
-    chalk.dim(`  •  `) +
+    themeColors.dim(`  •  `) +
     (originFilterMode > 0
-      ? activeHotkey('D', ` Provider (${activeOriginLabel})`, [0, 0, 0], PROVIDER_COLOR[[null, ...Object.keys(sources)][originFilterMode]] || [255, 255, 255])
+      ? activeHotkey('D', ` Provider (${activeOriginLabel})`, PROVIDER_COLOR[[null, ...Object.keys(sources)][originFilterMode]] || [255, 255, 255])
       : hotkey('D', ' Provider')) +
-    chalk.dim(`  •  `) +
-    (hideUnconfiguredModels ? activeHotkey('E', ' Configured Models Only') : hotkey('E', ' Configured Models Only')) +
-    chalk.dim(`  •  `) +
+    themeColors.dim(`  •  `) +
+    (hideUnconfiguredModels ? activeHotkey('E', ' Configured Models Only', configuredBadgeBg) : hotkey('E', ' Configured Models Only')) +
+    themeColors.dim(`  •  `) +
     hotkey('P', ' Settings') +
-    chalk.dim(`  •  `) +
+    themeColors.dim(`  •  `) +
     hotkey('K', ' Help')
   )
   // 📖 Line 2: install flow, recommend, feedback, and extended hints.
   lines.push(
-    chalk.dim(`  `) +
-    hotkey('Y', ' Install endpoints') + chalk.dim(`  •  `) +
-    hotkey('Q', ' Smart Recommend') + chalk.dim(`  •  `) +
+    themeColors.dim(`  `) +
+    hotkey('Y', ' Install endpoints') + themeColors.dim(`  •  `) +
+    hotkey('Q', ' Smart Recommend') + themeColors.dim(`  •  `) +
+    hotkey('G', ' Theme') + themeColors.dim(`  •  `) +
     hotkey('I', ' Feedback, bugs & requests')
   )
   // 📖 Proxy status is now shown via the J badge in line 2 above — no need for a dedicated line
   const footerLine =
-    chalk.rgb(255, 150, 200)('  Made with 💖 & ☕ by \x1b]8;;https://github.com/vava-nessa\x1b\\vava-nessa\x1b]8;;\x1b\\') +
-    chalk.dim('  •  ') +
+    themeColors.footerLove('  Made with 💖 & ☕ by \x1b]8;;https://github.com/vava-nessa\x1b\\vava-nessa\x1b]8;;\x1b\\') +
+    themeColors.dim('  •  ') +
     '⭐ ' +
-    chalk.yellow('\x1b]8;;https://github.com/vava-nessa/free-coding-models\x1b\\Star on GitHub\x1b]8;;\x1b\\') +
-    chalk.dim('  •  ') +
+    themeColors.link('\x1b]8;;https://github.com/vava-nessa/free-coding-models\x1b\\Star on GitHub\x1b]8;;\x1b\\') +
+    themeColors.dim('  •  ') +
     '🤝 ' +
-    chalk.rgb(255, 165, 0)('\x1b]8;;https://github.com/vava-nessa/free-coding-models/graphs/contributors\x1b\\Contributors\x1b]8;;\x1b\\') +
-    chalk.dim('  •  ') +
+    themeColors.warning('\x1b]8;;https://github.com/vava-nessa/free-coding-models/graphs/contributors\x1b\\Contributors\x1b]8;;\x1b\\') +
+    themeColors.dim('  •  ') +
     '☕ ' +
-    chalk.rgb(255, 200, 100)('\x1b]8;;https://buymeacoffee.com/vavanessadev\x1b\\Buy me a coffee\x1b]8;;\x1b\\') +
-    chalk.dim('  •  ') +
+    themeColors.footerCoffee('\x1b]8;;https://buymeacoffee.com/vavanessadev\x1b\\Buy me a coffee\x1b]8;;\x1b\\') +
+    themeColors.dim('  •  ') +
     '💬 ' +
-    chalk.rgb(200, 150, 255)('\x1b]8;;https://discord.gg/ZTNFHvvCkU\x1b\\Discord\x1b]8;;\x1b\\') +
-    chalk.dim(' → ') +
-    chalk.rgb(200, 150, 255)('https://discord.gg/ZTNFHvvCkU') +
-    chalk.dim('  •  ') +
-    chalk.yellow('N') + chalk.dim(' Changelog') +
-    chalk.dim('  •  ') +
-    chalk.dim('Ctrl+C Exit')
+    themeColors.footerDiscord('\x1b]8;;https://discord.gg/ZTNFHvvCkU\x1b\\Discord\x1b]8;;\x1b\\') +
+    themeColors.dim(' → ') +
+    themeColors.footerDiscord('https://discord.gg/ZTNFHvvCkU') +
+    themeColors.dim('  •  ') +
+    themeColors.hotkey('N') + themeColors.dim(' Changelog') +
+    themeColors.dim('  •  ') +
+    themeColors.dim('Ctrl+C Exit')
   lines.push(footerLine)
 
   if (versionStatus.isOutdated) {
@@ -646,7 +609,7 @@ export function renderTable(results, pendingPings, frame, cursor = null, sortCol
 
   // 📖 Stable release notice: keep the bridge rebuild status explicit in the main UI
   // 📖 so users do not go hunting for hidden controls that are disabled on purpose.
-  const bridgeNotice = chalk.magentaBright.italic(`  ${PROXY_DISABLED_NOTICE}`)
+  const bridgeNotice = chalk.italic.rgb(...getTierRgb('A-'))(`  ${PROXY_DISABLED_NOTICE}`)
   lines.push(bridgeNotice)
 
   // 📖 Append \x1b[K (erase to EOL) to each line so leftover chars from previous

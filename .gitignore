@@ -56,3 +56,4 @@ task/artifacts/*
 !task/artifacts/.gitkeep
 task/reports/*.md
 !task/reports/.gitkeep
+.aider*

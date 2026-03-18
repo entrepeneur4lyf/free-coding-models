@@ -103,6 +103,8 @@ free-coding-models
 
 On first run, you'll be prompted to enter your API key(s). You can skip providers and add more later with **`P`**.
 
+Need to fix contrast because your terminal theme is fighting the TUI? Press **`G`** at any time to cycle **Auto → Dark → Light**. The switch recolors the full interface live: table, Settings, Help, Smart Recommend, Feedback, and Changelog.
+
 **③ Pick a model and launch your tool:**
 
 ```
@@ -110,6 +112,8 @@ On first run, you'll be prompted to enter your API key(s). You can skip provider
 ```
 
 The model you select is automatically written into your tool's config (OpenCode, OpenClaw, Crush, etc.) and the tool opens immediately. Done.
+
+If the active CLI tool is missing, FCM now catches it before launch, offers a tiny Yes/No install prompt, installs the tool with its official global command, then resumes the same model launch automatically.
 
 > 💡 You can also run `free-coding-models --goose --tier S` to pre-filter to S-tier models for Goose before the TUI even opens.
 
@@ -171,8 +175,9 @@ Press **`Z`** in the TUI to cycle between tools without restarting.
 | `D` | Cycle provider filter |
 | `E` | Toggle configured-only mode |
 | `F` | Favorite / unfavorite model |
+| `G` | Cycle global theme (`Auto → Dark → Light`) |
 | `R/S/C/M/O/L/A/H/V/B/U` | Sort columns |
-| `P` | Settings (API keys, providers, updates) |
+| `P` | Settings (API keys, providers, updates, theme) |
 | `Y` | Install Endpoints (push provider into tool config) |
 | `Q` | Smart Recommend overlay |
 | `N` | Changelog |
@@ -196,7 +201,10 @@ Press **`Z`** in the TUI to cycle between tools without restarting.
 - **Keyless latency** — models ping even without an API key (show 🔑 NO KEY)
 - **Smart Recommend** — questionnaire picks the best model for your task type
 - **Install Endpoints** — push a full provider catalog into any tool's config (`Y`)
+- **Missing tool bootstrap** — detect absent CLIs, offer one-click install, then continue the selected launch automatically
 - **Width guardrail** — shows a warning instead of a broken table in narrow terminals
+- **Readable everywhere** — semantic theme palette keeps table rows, overlays, badges, and help screens legible in dark and light terminals
+- **Global theme switch** — `G` cycles `auto`, `dark`, and `light` live without restarting
 - **Auto-retry** — timeout models keep getting retried
 
 ---

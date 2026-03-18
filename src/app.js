@@ -122,6 +122,7 @@ import { createOverlayRenderers } from '../src/overlays.js'
 import { createKeyHandler } from '../src/key-handler.js'
 import { getToolModeOrder, getToolMeta } from '../src/tool-metadata.js'
 import { startExternalTool } from '../src/tool-launchers.js'
+import { getToolInstallPlan, installToolWithPlan, isToolInstalled } from '../src/tool-bootstrap.js'
 import { getConfiguredInstallableProviders, installProviderEndpoints, refreshInstalledEndpoints, getInstallTargetModes, getProviderCatalogModels } from '../src/endpoint-installer.js'
 import { loadCache, saveCache, clearCache, getCacheAge } from '../src/cache.js'
 import { checkConfigSecurity } from '../src/security.js'
@@ -176,7 +177,7 @@ const LOCAL_VERSION = pkg.version
 export async function runApp(cliArgs, config) {
 
   // 📖 Detect user active terminal theme
-  detectActiveTheme(config.settings?.theme || 'dark')
+  detectActiveTheme(config.settings?.theme || 'auto')
 
   // 📖 Check config file security — warn and offer auto-fix if permissions are too open
   const securityCheck = checkConfigSecurity()
@@ -420,6 +421,14 @@ export async function runApp(cliArgs, config) {
     installEndpointsSelectedModelIds: new Set(), // 📖 Multi-select buffer for the selected-models phase
     installEndpointsErrorMsg: null, // 📖 Temporary validation/error message inside the install flow
     installEndpointsResult: null, // 📖 Final install result shown in the result phase
+    // 📖 Missing-tool bootstrap overlay — confirms a one-click install before retrying the launch.
+    toolInstallPromptOpen: false,
+    toolInstallPromptCursor: 0,
+    toolInstallPromptScrollOffset: 0,
+    toolInstallPromptMode: null,
+    toolInstallPromptModel: null,
+    toolInstallPromptPlan: null,
+    toolInstallPromptErrorMsg: null,
     // 📖 Smart Recommend overlay state (Q key opens it)
     recommendOpen: false,         // 📖 Whether the recommend overlay is active
     recommendPhase: 'questionnaire', // 📖 'questionnaire'|'analyzing'|'results' — current phase
@@ -750,6 +759,8 @@ export async function runApp(cliArgs, config) {
     getInstallTargetModes,
     getProviderCatalogModels,
     getToolMeta,
+    getToolInstallPlan,
+    padEndDisplay,
   })
 
   onKeyPress = createKeyHandler({
@@ -785,6 +796,9 @@ export async function runApp(cliArgs, config) {
     startOpenCode,
     startExternalTool,
     getToolModeOrder,
+    getToolInstallPlan,
+    isToolInstalled,
+    installToolWithPlan,
     startRecommendAnalysis: overlays.startRecommendAnalysis,
     stopRecommendAnalysis: overlays.stopRecommendAnalysis,
     sendBugReport,
@@ -844,7 +858,7 @@ export async function runApp(cliArgs, config) {
     refreshAutoPingMode()
     state.frame++
     // 📖 Cache visible+sorted models each frame so Enter handler always matches the display
-    if (!state.settingsOpen && !state.installEndpointsOpen && !state.recommendOpen && !state.feedbackOpen && !state.changelogOpen) {
+    if (!state.settingsOpen && !state.installEndpointsOpen && !state.toolInstallPromptOpen && !state.recommendOpen && !state.feedbackOpen && !state.changelogOpen) {
       const visible = state.results.filter(r => !r.hidden)
       state.visibleSorted = sortResultsWithPinnedFavorites(visible, state.sortColumn, state.sortDirection)
     }
@@ -852,6 +866,8 @@ export async function runApp(cliArgs, config) {
       ? overlays.renderSettings()
       : state.installEndpointsOpen
         ? overlays.renderInstallEndpoints()
+      : state.toolInstallPromptOpen
+        ? overlays.renderToolInstallPrompt()
       : state.recommendOpen
         ? overlays.renderRecommend()
         : state.feedbackOpen

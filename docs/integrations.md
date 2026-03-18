@@ -5,7 +5,8 @@ Every tool follows the same pattern:
 1. Run `free-coding-models --<tool>` (or press `Z` to cycle)
 2. Wait for models to ping (green ✅)
 3. Navigate with ↑↓, press **Enter**
-4. FCM writes the selected model into the tool's config and launches it
+4. If the tool CLI is missing, FCM offers a tiny install confirmation and runs the official global install command
+5. FCM writes the selected model into the tool's config and launches it
 
 ---
 
@@ -79,7 +80,7 @@ Create or edit `~/.config/opencode/opencode.json`:
 free-coding-models --openclaw
 ```
 
-FCM writes the selected model as primary into `~/.openclaw/openclaw.json`.
+FCM writes the selected model as primary into `~/.openclaw/openclaw.json` and launches `openclaw`.
 
 ### What gets written
 

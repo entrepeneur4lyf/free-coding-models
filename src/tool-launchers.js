@@ -43,6 +43,7 @@ import { getApiKey } from './config.js'
 import { ENV_VAR_NAMES, isWindows } from './provider-metadata.js'
 import { getToolMeta } from './tool-metadata.js'
 import { PROVIDER_METADATA } from './provider-metadata.js'
+import { resolveToolBinaryPath } from './tool-bootstrap.js'
 
 const OPENAI_COMPAT_ENV_KEYS = [
   'OPENAI_API_KEY',
@@ -125,6 +126,10 @@ function applyOpenAiCompatEnv(env, apiKey, baseUrl, modelId) {
   env.LLM_BASE_URL = baseUrl
   env.LLM_MODEL = `openai/${modelId}`
   return env
+}
+
+function resolveLaunchCommand(mode, fallbackCommand) {
+  return resolveToolBinaryPath(mode) || fallbackCommand
 }
 
 /**
@@ -562,35 +567,35 @@ export async function startExternalTool(mode, model, config) {
   printConfigArtifacts(meta.label, launchPlan.configArtifacts)
 
   if (mode === 'aider') {
-    return spawnCommand(launchPlan.command, launchPlan.args, launchPlan.env)
+    return spawnCommand(resolveLaunchCommand(mode, launchPlan.command), launchPlan.args, launchPlan.env)
   }
 
   if (mode === 'crush') {
     console.log(chalk.dim('  📖 Crush will use the provider directly for this launch.'))
-    return spawnCommand(launchPlan.command, launchPlan.args, launchPlan.env)
+    return spawnCommand(resolveLaunchCommand(mode, launchPlan.command), launchPlan.args, launchPlan.env)
   }
 
   if (mode === 'goose') {
-    return spawnCommand(launchPlan.command, launchPlan.args, launchPlan.env)
+    return spawnCommand(resolveLaunchCommand(mode, launchPlan.command), launchPlan.args, launchPlan.env)
   }
 
   if (mode === 'qwen') {
-    return spawnCommand(launchPlan.command, launchPlan.args, launchPlan.env)
+    return spawnCommand(resolveLaunchCommand(mode, launchPlan.command), launchPlan.args, launchPlan.env)
   }
 
   if (mode === 'openhands') {
     console.log(chalk.dim(`  📖 OpenHands launched with model: ${model.modelId}`))
-    return spawnCommand(launchPlan.command, launchPlan.args, launchPlan.env)
+    return spawnCommand(resolveLaunchCommand(mode, launchPlan.command), launchPlan.args, launchPlan.env)
   }
 
   if (mode === 'amp') {
     console.log(chalk.dim(`  📖 Amp config updated with model: ${model.modelId}`))
-    return spawnCommand(launchPlan.command, launchPlan.args, launchPlan.env)
+    return spawnCommand(resolveLaunchCommand(mode, launchPlan.command), launchPlan.args, launchPlan.env)
   }
 
   if (mode === 'pi') {
     // 📖 Pi supports --provider and --model flags for guaranteed auto-selection
-    return spawnCommand(launchPlan.command, launchPlan.args, launchPlan.env)
+    return spawnCommand(resolveLaunchCommand(mode, launchPlan.command), launchPlan.args, launchPlan.env)
   }
 
   console.log(chalk.red(`  X Unsupported external tool mode: ${mode}`))

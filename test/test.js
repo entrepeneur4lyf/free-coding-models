@@ -20,7 +20,7 @@
 
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync, existsSync, accessSync, constants, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { readFileSync, existsSync, accessSync, constants, chmodSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
@@ -53,6 +53,7 @@ import {
   prepareExternalToolLaunch,
   resolveLauncherModelId,
 } from '../src/tool-launchers.js'
+import { getToolInstallPlan, isToolInstalled, resolveToolBinaryPath } from '../src/tool-bootstrap.js'
 import { startOpenClaw } from '../src/openclaw.js'
 import { getConfiguredInstallableProviders, getInstallTargetModes, installProviderEndpoints } from '../src/endpoint-installer.js'
 import { cleanupLegacyProxyArtifacts } from '../src/legacy-proxy-cleanup.js'
@@ -924,6 +925,7 @@ describe('renderSettings provider test badges', () => {
       settingsSyncStatus: null,
       activeProfile: null,
       terminalRows: 40,
+      terminalCols: 120,
       config,
     }
 
@@ -972,6 +974,7 @@ describe('renderSettings provider test badges', () => {
       getConfiguredInstallableProviders: () => [],
       getInstallTargetModes: () => [],
       getProviderCatalogModels: () => [],
+      padEndDisplay: (value) => value,
     }).renderSettings
   }
 
@@ -1003,6 +1006,14 @@ describe('renderSettings provider test badges', () => {
 
     assert.match(output, /Small Width Warnings/)
     assert.match(output, /Disabled/)
+  })
+
+  it('shows the global theme row with the resolved auto label', () => {
+    const renderSettings = buildSettingsRenderer({ apiKeys: {}, providers: {}, settings: { theme: 'auto' } })
+    const output = renderSettings()
+
+    assert.match(output, /Global Theme/)
+    assert.match(output, /Auto/)
   })
 })
 
@@ -1056,6 +1067,64 @@ describe('findBestModel', () => {
       }),
     ]
     assert.equal(findBestModel(results).label, 'Consistent')
+  })
+})
+
+describe('renderToolInstallPrompt', () => {
+  it('renders the official install command for a missing launcher', () => {
+    const installPlan = getToolInstallPlan('opencode', { platform: 'darwin' })
+    const state = {
+      toolInstallPromptOpen: true,
+      toolInstallPromptCursor: 0,
+      toolInstallPromptScrollOffset: 0,
+      toolInstallPromptMode: 'opencode',
+      toolInstallPromptModel: {
+        label: 'DeepSeek V3.2',
+      },
+      toolInstallPromptPlan: installPlan,
+      toolInstallPromptErrorMsg: null,
+      terminalRows: 40,
+      terminalCols: 120,
+      config: { settings: {} },
+    }
+
+    const renderers = createOverlayRenderers(state, {
+      chalk,
+      sources,
+      PROVIDER_METADATA: {},
+      PROVIDER_COLOR: {},
+      LOCAL_VERSION: '0.3.18',
+      getApiKey: () => null,
+      resolveApiKeys: () => [],
+      isProviderEnabled: () => true,
+      TIER_CYCLE: ['All'],
+      OVERLAY_PANEL_WIDTH: 120,
+      keepOverlayTargetVisible: (currentOffset) => currentOffset,
+      sliceOverlayLines: (lines, offset = 0) => ({ visible: lines, offset }),
+      tintOverlayLines: (lines) => lines,
+      TASK_TYPES: [],
+      PRIORITY_TYPES: [],
+      CONTEXT_BUDGETS: [],
+      FRAMES: ['-'],
+      TIER_COLOR: () => '',
+      getAvg: () => 0,
+      getStabilityScore: () => 0,
+      toFavoriteKey: () => '',
+      getTopRecommendations: () => [],
+      adjustScrollOffset: () => {},
+      getPingModel: () => null,
+      getConfiguredInstallableProviders: () => [],
+      getInstallTargetModes: () => [],
+      getProviderCatalogModels: () => [],
+      getToolMeta: () => ({ label: 'OpenCode CLI', emoji: '💻' }),
+      getToolInstallPlan: () => installPlan,
+      padEndDisplay: (value) => value,
+    })
+
+    const output = renderers.renderToolInstallPrompt()
+    assert.match(output, /Missing Tool/)
+    assert.match(output, /npm install -g opencode-ai/)
+    assert.match(output, /DeepSeek V3\.2/)
   })
 })
 
@@ -1482,6 +1551,7 @@ describe('config profile functions', () => {
   it('defaults configured-only mode and preferred tool mode in profile settings', () => {
     assert.equal(_emptyProfileSettings().hideUnconfiguredModels, true)
     assert.equal(_emptyProfileSettings().preferredToolMode, 'opencode')
+    assert.equal(_emptyProfileSettings().theme, 'auto')
   })
 })
 
@@ -1822,6 +1892,44 @@ describe('tool launcher env building', () => {
 
   it('keeps launcher model ids provider-native in direct mode', () => {
     assert.equal(resolveLauncherModelId({ modelId: 'deepseek-ai/deepseek-v3.1' }), 'deepseek-ai/deepseek-v3.1')
+  })
+})
+
+describe('tool bootstrap helpers', () => {
+  it('returns the npm install plan for opencode', () => {
+    const plan = getToolInstallPlan('opencode', { platform: 'darwin' })
+    assert.equal(plan.supported, true)
+    assert.equal(plan.binary, 'opencode')
+    assert.match(plan.shellCommand || '', /npm install -g opencode-ai/)
+  })
+
+  it('returns the official goose installer script on linux', () => {
+    const plan = getToolInstallPlan('goose', { platform: 'linux' })
+    assert.equal(plan.supported, true)
+    assert.match(plan.shellCommand || '', /download_cli\.sh \| CONFIGURE=false bash/)
+  })
+
+  it('marks OpenHands auto-install unsupported on native Windows', () => {
+    const plan = getToolInstallPlan('openhands', { platform: 'win32' })
+    assert.equal(plan.supported, false)
+    assert.match(plan.reason || '', /WSL/i)
+  })
+
+  it('resolves a fake tool binary from PATH without spawning it', () => {
+    const dir = join(tmpdir(), `fcm-tool-bootstrap-${process.pid}-${Date.now()}`)
+    mkdirSync(dir, { recursive: true })
+    const binaryPath = join(dir, 'crush')
+
+    try {
+      writeFileSync(binaryPath, '#!/bin/sh\nexit 0\n')
+      chmodSync(binaryPath, 0o755)
+
+      const resolved = resolveToolBinaryPath('crush', { env: { PATH: dir } })
+      assert.equal(resolved, binaryPath)
+      assert.equal(isToolInstalled('crush', { env: { PATH: dir } }), true)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
 

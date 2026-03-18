@@ -30,6 +30,7 @@
 import { loadChangelog } from './changelog-loader.js'
 import { loadConfig, replaceConfigContents } from './config.js'
 import { cleanupLegacyProxyArtifacts } from './legacy-proxy-cleanup.js'
+import { cycleThemeSetting, detectActiveTheme } from './theme.js'
 
 // 📖 Some providers need an explicit probe model because the first catalog entry
 // 📖 is not guaranteed to be accepted by their chat endpoint.
@@ -184,6 +185,9 @@ export function createKeyHandler(ctx) {
     startOpenCode,
     startExternalTool,
     getToolModeOrder,
+    getToolInstallPlan,
+    isToolInstalled,
+    installToolWithPlan,
     startRecommendAnalysis,
     stopRecommendAnalysis,
     sendBugReport,
@@ -206,6 +210,97 @@ export function createKeyHandler(ctx) {
   } = ctx
 
   let userSelected = null
+
+  function resetToolInstallPrompt() {
+    state.toolInstallPromptOpen = false
+    state.toolInstallPromptCursor = 0
+    state.toolInstallPromptScrollOffset = 0
+    state.toolInstallPromptMode = null
+    state.toolInstallPromptModel = null
+    state.toolInstallPromptPlan = null
+    state.toolInstallPromptErrorMsg = null
+  }
+
+  function shouldCheckMissingTool(mode) {
+    return mode !== 'opencode-desktop'
+  }
+
+  async function launchSelectedModel(selected, options = {}) {
+    const { uiAlreadyStopped = false } = options
+    userSelected = { modelId: selected.modelId, label: selected.label, tier: selected.tier, providerKey: selected.providerKey }
+
+    if (!uiAlreadyStopped) {
+      readline.emitKeypressEvents(process.stdin)
+      if (process.stdin.isTTY) process.stdin.setRawMode(true)
+      stopUi()
+    }
+
+    // 📖 Show selection status before handing control to the target tool.
+    if (selected.status === 'timeout') {
+      console.log(chalk.yellow(`  ⚠ Selected: ${selected.label} (currently timing out)`))
+    } else if (selected.status === 'down') {
+      console.log(chalk.red(`  ⚠ Selected: ${selected.label} (currently down)`))
+    } else {
+      console.log(chalk.cyan(`  ✓ Selected: ${selected.label}`))
+    }
+    console.log()
+
+    // 📖 OpenClaw manages API keys inside its own config file. All other tools
+    // 📖 still need a provider key to be useful, so keep the existing warning.
+    if (state.mode !== 'openclaw') {
+      const selectedApiKey = getApiKey(state.config, selected.providerKey)
+      if (!selectedApiKey) {
+        console.log(chalk.yellow(`  Warning: No API key configured for ${selected.providerKey}.`))
+        console.log(chalk.yellow(`  The selected tool may not be able to use ${selected.label}.`))
+        console.log(chalk.dim(`  Set ${ENV_VAR_NAMES[selected.providerKey] || selected.providerKey.toUpperCase() + '_API_KEY'} or configure via settings (P key).`))
+        console.log()
+      }
+    }
+
+    let exitCode = 0
+    if (state.mode === 'openclaw') {
+      exitCode = await startOpenClaw(userSelected, state.config, { launchCli: true })
+    } else if (state.mode === 'opencode-desktop') {
+      exitCode = await startOpenCodeDesktop(userSelected, state.config)
+    } else if (state.mode === 'opencode') {
+      exitCode = await startOpenCode(userSelected, state.config)
+    } else {
+      exitCode = await startExternalTool(state.mode, userSelected, state.config)
+    }
+
+    process.exit(typeof exitCode === 'number' ? exitCode : 0)
+  }
+
+  async function installMissingToolAndLaunch(selected, installPlan) {
+    const currentPlan = installPlan || getToolInstallPlan(state.mode)
+    stopUi({ resetRawMode: true })
+
+    console.log(chalk.cyan(`  📦 Installing missing tool for ${state.mode}...`))
+    if (currentPlan?.summary) console.log(chalk.dim(`  ${currentPlan.summary}`))
+    if (currentPlan?.shellCommand) console.log(chalk.dim(`  ${currentPlan.shellCommand}`))
+    if (currentPlan?.note) console.log(chalk.dim(`  ${currentPlan.note}`))
+    console.log()
+
+    const installResult = await installToolWithPlan(currentPlan)
+    if (!installResult.ok) {
+      console.log(chalk.red(`  X Tool installation failed with exit code ${installResult.exitCode}.`))
+      if (currentPlan?.docsUrl) console.log(chalk.dim(`  Docs: ${currentPlan.docsUrl}`))
+      console.log()
+      process.exit(installResult.exitCode || 1)
+    }
+
+    if (shouldCheckMissingTool(state.mode) && !isToolInstalled(state.mode)) {
+      console.log(chalk.yellow('  ⚠ The installer finished, but the tool is still not reachable from this terminal session.'))
+      console.log(chalk.dim('  Restart your shell or add the tool bin directory to PATH, then retry the launch.'))
+      if (currentPlan?.docsUrl) console.log(chalk.dim(`  Docs: ${currentPlan.docsUrl}`))
+      console.log()
+      process.exit(1)
+    }
+
+    console.log(chalk.green('  ✓ Tool installed successfully. Continuing with the selected model...'))
+    console.log()
+    await launchSelectedModel(selected, { uiAlreadyStopped: true })
+  }
 
   // ─── Settings key test helper ───────────────────────────────────────────────
   // 📖 Fires a single ping to the selected provider to verify the API key works.
@@ -383,6 +478,20 @@ export function createKeyHandler(ctx) {
     saveConfig(state.config)
   }
 
+  // 📖 Theme switches need to update both persisted preference and the live
+  // 📖 semantic palette immediately so every screen redraw adopts the new colors.
+  function applyThemeSetting(nextTheme) {
+    if (!state.config.settings) state.config.settings = {}
+    state.config.settings.theme = nextTheme
+    saveConfig(state.config)
+    detectActiveTheme(nextTheme)
+  }
+
+  function cycleGlobalTheme() {
+    const currentTheme = state.config.settings?.theme || 'auto'
+    applyThemeSetting(cycleThemeSetting(currentTheme))
+  }
+
   function resetInstallEndpointsOverlay() {
     state.installEndpointsOpen = false
     state.installEndpointsPhase = 'providers'
@@ -430,6 +539,11 @@ export function createKeyHandler(ctx) {
   return async (str, key) => {
     if (!key) return
     noteUserActivity()
+
+    if (!state.feedbackOpen && !state.settingsEditMode && !state.settingsAddKeyMode && key.name === 'g' && !key.ctrl && !key.meta) {
+      cycleGlobalTheme()
+      return
+    }
 
     // 📖 Profile system removed - API keys now persist permanently across all sessions
 
@@ -609,6 +723,44 @@ export function createKeyHandler(ctx) {
           resetInstallEndpointsOverlay()
         }
         return
+      }
+
+      return
+    }
+
+    if (state.toolInstallPromptOpen) {
+      if (key.ctrl && key.name === 'c') { exit(0); return }
+
+      const installPlan = state.toolInstallPromptPlan || getToolInstallPlan(state.toolInstallPromptMode)
+      const installSupported = Boolean(installPlan?.supported)
+
+      if (key.name === 'escape') {
+        resetToolInstallPrompt()
+        return
+      }
+
+      if (installSupported && key.name === 'up') {
+        state.toolInstallPromptCursor = Math.max(0, state.toolInstallPromptCursor - 1)
+        return
+      }
+
+      if (installSupported && key.name === 'down') {
+        state.toolInstallPromptCursor = Math.min(1, state.toolInstallPromptCursor + 1)
+        return
+      }
+
+      if (key.name === 'return') {
+        if (!installSupported) {
+          resetToolInstallPrompt()
+          return
+        }
+
+        const selectedModel = state.toolInstallPromptModel
+        const shouldInstall = state.toolInstallPromptCursor === 0
+        resetToolInstallPrompt()
+
+        if (!shouldInstall || !selectedModel) return
+        await installMissingToolAndLaunch(selectedModel, installPlan)
       }
 
       return
@@ -1078,6 +1230,11 @@ export function createKeyHandler(ctx) {
           return
         }
 
+        if (state.settingsCursor === themeRowIdx) {
+          cycleGlobalTheme()
+          return
+        }
+
         if (state.settingsCursor === cleanupLegacyProxyRowIdx) {
           runLegacyProxyCleanup()
           return
@@ -1098,6 +1255,7 @@ export function createKeyHandler(ctx) {
 
         // 📖 Enter edit mode for the selected provider's key
         const pk = providerKeys[state.settingsCursor]
+        if (!pk) return
         state.settingsEditBuffer = resolveApiKeys(state.config, pk)[0] ?? ''
         state.settingsEditMode = true
         return
@@ -1112,15 +1270,7 @@ export function createKeyHandler(ctx) {
         ) return
         // 📖 Theme configuration cycle inside settings
         if (state.settingsCursor === themeRowIdx) {
-          const themes = ['dark', 'light', 'auto']
-          const currentTheme = state.config.settings?.theme || 'dark'
-          const nextIndex = (themes.indexOf(currentTheme) + 1) % themes.length
-          state.config.settings.theme = themes[nextIndex]
-          saveConfig(state.config)
-          try {
-            const { detectActiveTheme } = await import('../src/theme.js')
-            detectActiveTheme(state.config.settings.theme)
-          } catch {}
+          cycleGlobalTheme()
           return
         }
         // 📖 Widths Warning toggle (disable/enable)
@@ -1142,6 +1292,8 @@ export function createKeyHandler(ctx) {
       if (key.name === 't') {
         if (
           state.settingsCursor === updateRowIdx
+          || state.settingsCursor === widthWarningRowIdx
+          || state.settingsCursor === themeRowIdx
           || state.settingsCursor === cleanupLegacyProxyRowIdx
           || state.settingsCursor === changelogViewRowIdx
         ) return
@@ -1149,6 +1301,7 @@ export function createKeyHandler(ctx) {
 
         // 📖 Test the selected provider's key (fires a real ping)
         const pk = providerKeys[state.settingsCursor]
+        if (!pk) return
         testProviderKey(pk)
         return
       }
@@ -1442,46 +1595,24 @@ export function createKeyHandler(ctx) {
       // 📖 Use the cached visible+sorted array — guaranteed to match what's on screen
       const selected = state.visibleSorted[state.cursor]
       if (!selected) return // 📖 Guard: empty visible list (all filtered out)
-      // 📖 Allow selecting ANY model (even timeout/down) - user knows what they're doing
-      userSelected = { modelId: selected.modelId, label: selected.label, tier: selected.tier, providerKey: selected.providerKey }
-
-      // 📖 Stop everything and act on selection immediately
-      readline.emitKeypressEvents(process.stdin)
-      process.stdin.setRawMode(true)
-      stopUi()
-
-      // 📖 Show selection with status
-      if (selected.status === 'timeout') {
-        console.log(chalk.yellow(`  ⚠ Selected: ${selected.label} (currently timing out)`))
-      } else if (selected.status === 'down') {
-        console.log(chalk.red(`  ⚠ Selected: ${selected.label} (currently down)`))
-      } else {
-        console.log(chalk.cyan(`  ✓ Selected: ${selected.label}`))
-      }
-      console.log()
-
-      // 📖 Warn if no API key is configured for the selected model's provider
-      if (state.mode !== 'openclaw') {
-        const selectedApiKey = getApiKey(state.config, selected.providerKey)
-        if (!selectedApiKey) {
-          console.log(chalk.yellow(`  Warning: No API key configured for ${selected.providerKey}.`))
-          console.log(chalk.yellow(`  The selected tool may not be able to use ${selected.label}.`))
-          console.log(chalk.dim(`  Set ${ENV_VAR_NAMES[selected.providerKey] || selected.providerKey.toUpperCase() + '_API_KEY'} or configure via settings (P key).`))
-          console.log()
+      if (shouldCheckMissingTool(state.mode) && !isToolInstalled(state.mode)) {
+        state.toolInstallPromptOpen = true
+        state.toolInstallPromptCursor = 0
+        state.toolInstallPromptScrollOffset = 0
+        state.toolInstallPromptMode = state.mode
+        state.toolInstallPromptModel = {
+          modelId: selected.modelId,
+          label: selected.label,
+          tier: selected.tier,
+          providerKey: selected.providerKey,
+          status: selected.status,
         }
+        state.toolInstallPromptPlan = getToolInstallPlan(state.mode)
+        state.toolInstallPromptErrorMsg = null
+        return
       }
 
-      // 📖 Dispatch to the correct integration based on active mode
-      if (state.mode === 'openclaw') {
-        await startOpenClaw(userSelected, state.config)
-      } else if (state.mode === 'opencode-desktop') {
-        await startOpenCodeDesktop(userSelected, state.config)
-      } else if (state.mode === 'opencode') {
-        await startOpenCode(userSelected, state.config)
-      } else {
-        await startExternalTool(state.mode, userSelected, state.config)
-      }
-      process.exit(0)
+      await launchSelectedModel(selected)
     }
   }
 }

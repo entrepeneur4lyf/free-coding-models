@@ -22,7 +22,7 @@
 
 import { loadChangelog } from './changelog-loader.js'
 import { buildCliHelpLines } from './cli-help.js'
-import { themeColors } from './theme.js'
+import { themeColors, getThemeStatusLabel, getProviderRgb } from './theme.js'
 
 export function createOverlayRenderers(state, deps) {
   const {
@@ -54,7 +54,12 @@ export function createOverlayRenderers(state, deps) {
     getInstallTargetModes,
     getProviderCatalogModels,
     getToolMeta,
+    getToolInstallPlan,
+    padEndDisplay,
   } = deps
+
+  const bullet = (isCursor) => (isCursor ? themeColors.accentBold('  ❯ ') : themeColors.dim('    '))
+  const activeThemeSetting = () => state.config.settings?.theme || 'auto'
 
   // 📖 Wrap plain diagnostic text so long Settings messages stay readable inside
   // 📖 the overlay instead of turning into one truncated red line.
@@ -88,25 +93,26 @@ export function createOverlayRenderers(state, deps) {
     const providerKeys = Object.keys(sources)
     const updateRowIdx = providerKeys.length
     const widthWarningRowIdx = updateRowIdx + 1
-    const cleanupLegacyProxyRowIdx = widthWarningRowIdx + 1
+    const themeRowIdx = widthWarningRowIdx + 1
+    const cleanupLegacyProxyRowIdx = themeRowIdx + 1
     const changelogViewRowIdx = cleanupLegacyProxyRowIdx + 1
     const EL = '\x1b[K'
     const lines = []
     const cursorLineByRow = {}
 
     // 📖 Branding header
-    lines.push(`  ${chalk.cyanBright('🚀')} ${chalk.bold.cyanBright('free-coding-models')} ${chalk.dim(`v${LOCAL_VERSION}`)}`)
-    lines.push(`  ${chalk.bold('⚙  Settings')}`)
+    lines.push(`  ${themeColors.accent('🚀')} ${themeColors.accentBold('free-coding-models')} ${themeColors.dim(`v${LOCAL_VERSION}`)}`)
+    lines.push(`  ${themeColors.textBold('⚙  Settings')}`)
 
     if (state.settingsErrorMsg) {
-      lines.push(`  ${chalk.red.bold(state.settingsErrorMsg)}`)
+      lines.push(`  ${themeColors.errorBold(state.settingsErrorMsg)}`)
       lines.push('')
     }
 
-    lines.push(`  ${chalk.bold('🧩 Providers')}`)
+    lines.push(`  ${themeColors.textBold('🧩 Providers')}`)
     // 📖 Dynamic separator line using 100% terminal width
     const separatorWidth = Math.max(20, state.terminalCols - 10)
-    lines.push(`  ${chalk.dim('  ' + '─'.repeat(separatorWidth))}`)
+    lines.push(`  ${themeColors.dim('  ' + '─'.repeat(separatorWidth))}`)
     lines.push('')
 
     for (let i = 0; i < providerKeys.length; i++) {
@@ -124,42 +130,41 @@ export function createOverlayRenderers(state, deps) {
       let keyDisplay
       if ((state.settingsEditMode || state.settingsAddKeyMode) && isCursor) {
         // 📖 Inline editing/adding: show typed buffer with cursor indicator
-        const modePrefix = state.settingsAddKeyMode ? chalk.dim('[+] ') : ''
-        keyDisplay = chalk.cyanBright(`${modePrefix}${state.settingsEditBuffer || ''}▏`)
+        const modePrefix = state.settingsAddKeyMode ? themeColors.dim('[+] ') : ''
+        keyDisplay = themeColors.accentBold(`${modePrefix}${state.settingsEditBuffer || ''}▏`)
       } else if (keyCount > 0) {
         // 📖 Show the primary (first/string) key masked + count indicator for extras
         const primaryKey = allKeys[0]
         const visible = primaryKey.slice(-4)
         const masked = '•'.repeat(Math.min(16, Math.max(4, primaryKey.length - 4)))
-        const keyMasked = chalk.dim(masked + visible)
-        const extra = keyCount > 1 ? chalk.cyan(` (+${keyCount - 1} more)`) : ''
+        const keyMasked = themeColors.dim(masked + visible)
+        const extra = keyCount > 1 ? themeColors.info(` (+${keyCount - 1} more)`) : ''
         keyDisplay = keyMasked + extra
       } else {
-        keyDisplay = chalk.dim('(no key set)')
+        keyDisplay = themeColors.dim('(no key set)')
       }
 
       // 📖 Test result badge
       const testResult = state.settingsTestResults[pk]
       // 📖 Default badge reflects configuration first: a saved key should look
       // 📖 ready to test even before the user has run the probe once.
-      let testBadge = keyCount > 0 ? chalk.cyan('[Test]') : chalk.dim('[Missing Key 🔑]')
-      if (testResult === 'pending') testBadge = chalk.yellow('[Testing…]')
-      else if (testResult === 'ok')   testBadge = chalk.greenBright('[Test ✅]')
-      else if (testResult === 'missing_key') testBadge = chalk.dim('[Missing Key 🔑]')
-      else if (testResult === 'auth_error') testBadge = chalk.red('[Auth ❌]')
-      else if (testResult === 'rate_limited') testBadge = chalk.yellow('[Rate limit ⏳]')
-      else if (testResult === 'no_callable_model') testBadge = chalk.magenta('[No model ⚠]')
-      else if (testResult === 'fail') testBadge = chalk.red('[Test ❌]')
+      let testBadge = keyCount > 0 ? themeColors.info('[Test]') : themeColors.dim('[Missing Key 🔑]')
+      if (testResult === 'pending') testBadge = themeColors.warning('[Testing…]')
+      else if (testResult === 'ok')   testBadge = themeColors.successBold('[Test ✅]')
+      else if (testResult === 'missing_key') testBadge = themeColors.dim('[Missing Key 🔑]')
+      else if (testResult === 'auth_error') testBadge = themeColors.error('[Auth ❌]')
+      else if (testResult === 'rate_limited') testBadge = themeColors.warning('[Rate limit ⏳]')
+      else if (testResult === 'no_callable_model') testBadge = chalk.rgb(...getProviderRgb('openrouter'))('[No model ⚠]')
+      else if (testResult === 'fail') testBadge = themeColors.error('[Test ❌]')
       // 📖 No truncation of rate limits - overlay now uses 100% terminal width
-      const rateSummary = chalk.dim(meta.rateLimits || 'No limit info')
+      const rateSummary = themeColors.dim(meta.rateLimits || 'No limit info')
 
-      const enabledBadge = enabled ? chalk.greenBright('✅') : chalk.redBright('❌')
+      const enabledBadge = enabled ? themeColors.successBold('✅') : themeColors.errorBold('❌')
       // 📖 Color provider names the same way as in the main table
       const providerRgb = PROVIDER_COLOR[pk] ?? [105, 190, 245]
       const providerName = chalk.bold.rgb(...providerRgb)((meta.label || src.name || pk).slice(0, 22).padEnd(22))
-      const bullet = isCursor ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
 
-      const row = `${bullet}[ ${enabledBadge} ] ${providerName}  ${keyDisplay.padEnd(30)}  ${testBadge}  ${rateSummary}`
+      const row = `${bullet(isCursor)}[ ${enabledBadge} ] ${providerName}  ${padEndDisplay(keyDisplay, 30)}  ${testBadge}  ${rateSummary}`
       cursorLineByRow[i] = lines.length
       lines.push(isCursor ? themeColors.bgCursor(row) : row)
     }
@@ -170,73 +175,74 @@ export function createOverlayRenderers(state, deps) {
     const selectedMeta = PROVIDER_METADATA[selectedProviderKey] || {}
     if (selectedSource && state.settingsCursor < providerKeys.length) {
       const selectedKey = getApiKey(state.config, selectedProviderKey)
-      const setupStatus = selectedKey ? chalk.green('API key detected ✅') : chalk.yellow('API key missing ⚠')
+      const setupStatus = selectedKey ? themeColors.success('API key detected ✅') : themeColors.warning('API key missing ⚠')
       // 📖 Color the provider name in the setup instructions header
       const selectedProviderRgb = PROVIDER_COLOR[selectedProviderKey] ?? [105, 190, 245]
       const coloredProviderName = chalk.bold.rgb(...selectedProviderRgb)(selectedMeta.label || selectedSource.name || selectedProviderKey)
-      lines.push(`  ${chalk.bold('Setup Instructions')} — ${coloredProviderName}`)
-      lines.push(chalk.dim(`  1) Create a ${selectedMeta.label || selectedSource.name} account: ${selectedMeta.signupUrl || 'signup link missing'}`))
-      lines.push(chalk.dim(`  2) ${selectedMeta.signupHint || 'Generate an API key and paste it with Enter on this row'}`))
-      lines.push(chalk.dim(`  3) Press ${chalk.yellow('T')} to test your key. Status: ${setupStatus}`))
+      lines.push(`  ${themeColors.textBold('Setup Instructions')} — ${coloredProviderName}`)
+      lines.push(themeColors.dim(`  1) Create a ${selectedMeta.label || selectedSource.name} account: ${selectedMeta.signupUrl || 'signup link missing'}`))
+      lines.push(themeColors.dim(`  2) ${selectedMeta.signupHint || 'Generate an API key and paste it with Enter on this row'}`))
+      lines.push(themeColors.dim(`  3) Press ${themeColors.hotkey('T')} to test your key. Status: ${setupStatus}`))
       if (selectedProviderKey === 'cloudflare') {
         const hasAccountId = Boolean((process.env.CLOUDFLARE_ACCOUNT_ID || '').trim())
-        const accountIdStatus = hasAccountId ? chalk.green('CLOUDFLARE_ACCOUNT_ID detected ✅') : chalk.yellow('Set CLOUDFLARE_ACCOUNT_ID ⚠')
-        lines.push(chalk.dim(`  4) Export ${chalk.yellow('CLOUDFLARE_ACCOUNT_ID')} in your shell. Status: ${accountIdStatus}`))
+        const accountIdStatus = hasAccountId ? themeColors.success('CLOUDFLARE_ACCOUNT_ID detected ✅') : themeColors.warning('Set CLOUDFLARE_ACCOUNT_ID ⚠')
+        lines.push(themeColors.dim(`  4) Export ${themeColors.hotkey('CLOUDFLARE_ACCOUNT_ID')} in your shell. Status: ${accountIdStatus}`))
       }
       const testDetail = state.settingsTestDetails?.[selectedProviderKey]
       if (testDetail) {
         lines.push('')
-        lines.push(chalk.red.bold('  Test Diagnostics'))
+        lines.push(themeColors.errorBold('  Test Diagnostics'))
         for (const detailLine of wrapPlainText(testDetail)) {
-          lines.push(chalk.red(`  ${detailLine}`))
+          lines.push(themeColors.error(`  ${detailLine}`))
         }
       }
       lines.push('')
     }
 
     lines.push('')
-    lines.push(`  ${chalk.bold('🛠 Maintenance')}`)
-    lines.push(`  ${chalk.dim('  ' + '─'.repeat(separatorWidth))}`)
+    lines.push(`  ${themeColors.textBold('🛠 Maintenance')}`)
+    lines.push(`  ${themeColors.dim('  ' + '─'.repeat(separatorWidth))}`)
     lines.push('')
 
     const updateCursor = state.settingsCursor === updateRowIdx
-    const updateBullet = updateCursor ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
     const updateState = state.settingsUpdateState
     const latestFound = state.settingsUpdateLatestVersion
     const updateActionLabel = updateState === 'available' && latestFound
       ? `Install update (v${latestFound})`
       : 'Check for updates manually'
-    let updateStatus = chalk.dim('Press Enter or U to check npm registry')
-    if (updateState === 'checking') updateStatus = chalk.yellow('Checking npm registry…')
-    if (updateState === 'available' && latestFound) updateStatus = chalk.greenBright(`Update available: v${latestFound} (Enter to install)`)
-    if (updateState === 'up-to-date') updateStatus = chalk.green('Already on latest version')
-    if (updateState === 'error') updateStatus = chalk.red('Check failed (press U to retry)')
-    if (updateState === 'installing') updateStatus = chalk.cyan('Installing update…')
-    const updateRow = `${updateBullet}${chalk.bold(updateActionLabel).padEnd(44)} ${updateStatus}`
+    let updateStatus = themeColors.dim('Press Enter or U to check npm registry')
+    if (updateState === 'checking') updateStatus = themeColors.warning('Checking npm registry…')
+    if (updateState === 'available' && latestFound) updateStatus = themeColors.successBold(`Update available: v${latestFound} (Enter to install)`)
+    if (updateState === 'up-to-date') updateStatus = themeColors.success('Already on latest version')
+    if (updateState === 'error') updateStatus = themeColors.error('Check failed (press U to retry)')
+    if (updateState === 'installing') updateStatus = themeColors.info('Installing update…')
+    const updateRow = `${bullet(updateCursor)}${themeColors.textBold(updateActionLabel).padEnd(44)} ${updateStatus}`
     cursorLineByRow[updateRowIdx] = lines.length
     lines.push(updateCursor ? themeColors.bgCursor(updateRow) : updateRow)
     // 📖 Width warning visibility row for the startup narrow-terminal overlay.
     const disableWidthsWarning = Boolean(state.config.settings?.disableWidthsWarning)
-    const widthWarningBullet = state.settingsCursor === widthWarningRowIdx ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
     const widthWarningStatus = disableWidthsWarning
-      ? chalk.redBright('🙈 Disabled')
-      : chalk.greenBright('👁 Enabled')
-    const widthWarningRow = `${widthWarningBullet}${chalk.bold('Small Width Warnings').padEnd(44)} ${widthWarningStatus}`
+      ? themeColors.errorBold('🙈 Disabled')
+      : themeColors.successBold('👁 Enabled')
+    const widthWarningRow = `${bullet(state.settingsCursor === widthWarningRowIdx)}${themeColors.textBold('Small Width Warnings').padEnd(44)} ${widthWarningStatus}`
     cursorLineByRow[widthWarningRowIdx] = lines.length
     lines.push(state.settingsCursor === widthWarningRowIdx ? themeColors.bgCursor(widthWarningRow) : widthWarningRow)
+    const themeStatus = getThemeStatusLabel(activeThemeSetting())
+    const themeStatusColor = themeStatus.includes('Dark') ? themeColors.warningBold : themeColors.info
+    const themeRow = `${bullet(state.settingsCursor === themeRowIdx)}${themeColors.textBold('Global Theme').padEnd(44)} ${themeStatusColor(themeStatus)}`
+    cursorLineByRow[themeRowIdx] = lines.length
+    lines.push(state.settingsCursor === themeRowIdx ? themeColors.bgCursor(themeRow) : themeRow)
     if (updateState === 'error' && state.settingsUpdateError) {
-      lines.push(chalk.red(`      ${state.settingsUpdateError}`))
+      lines.push(themeColors.error(`      ${state.settingsUpdateError}`))
     }
 
     // 📖 Cleanup row removes stale proxy-era config left behind by older builds.
-    const cleanupLegacyProxyBullet = state.settingsCursor === cleanupLegacyProxyRowIdx ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
-    const cleanupLegacyProxyRow = `${cleanupLegacyProxyBullet}${chalk.bold('Clean Legacy Proxy Config').padEnd(44)} ${chalk.magentaBright('Enter remove discontinued bridge leftovers')}`
+    const cleanupLegacyProxyRow = `${bullet(state.settingsCursor === cleanupLegacyProxyRowIdx)}${themeColors.textBold('Clean Legacy Proxy Config').padEnd(44)} ${themeColors.warning('Enter remove discontinued bridge leftovers')}`
     cursorLineByRow[cleanupLegacyProxyRowIdx] = lines.length
     lines.push(state.settingsCursor === cleanupLegacyProxyRowIdx ? themeColors.bgCursorLegacy(cleanupLegacyProxyRow) : cleanupLegacyProxyRow)
 
     // 📖 Changelog viewer row
-    const changelogViewBullet = state.settingsCursor === changelogViewRowIdx ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
-    const changelogViewRow = `${changelogViewBullet}${chalk.bold('View Changelog').padEnd(44)} ${chalk.dim('Enter browse version history')}`
+    const changelogViewRow = `${bullet(state.settingsCursor === changelogViewRowIdx)}${themeColors.textBold('View Changelog').padEnd(44)} ${themeColors.dim('Enter browse version history')}`
     cursorLineByRow[changelogViewRowIdx] = lines.length
     lines.push(state.settingsCursor === changelogViewRowIdx ? themeColors.bgCursorSettingsList(changelogViewRow) : changelogViewRow)
 
@@ -244,26 +250,26 @@ export function createOverlayRenderers(state, deps) {
 
     lines.push('')
     if (state.settingsEditMode) {
-      lines.push(chalk.dim('  Type API key  •  Enter Save  •  Esc Cancel'))
+      lines.push(themeColors.dim('  Type API key  •  Enter Save  •  Esc Cancel'))
     } else {
-      lines.push(chalk.dim('  ↑↓ Navigate  •  Enter Edit/Run  •  + Add key  •  - Remove key  •  Space Toggle  •  T Test key  •  U Updates  •  Esc Close'))
+      lines.push(themeColors.dim('  ↑↓ Navigate  •  Enter Edit/Run/Cycle  •  + Add key  •  - Remove key  •  Space Toggle/Cycle  •  T Test key  •  U Updates  •  G Global theme  •  Esc Close'))
     }
     // 📖 Show sync/restore status message if set
     if (state.settingsSyncStatus) {
       const { type, msg } = state.settingsSyncStatus
-      lines.push(type === 'success' ? chalk.greenBright(`  ${msg}`) : chalk.yellow(`  ${msg}`))
+      lines.push(type === 'success' ? themeColors.successBold(`  ${msg}`) : themeColors.warning(`  ${msg}`))
     }
     lines.push('')
 
     // 📖 Footer with credits
     lines.push('')
     lines.push(
-      chalk.dim('  ') +
-      chalk.rgb(255, 150, 200)('Made with 💖 & ☕ by ') +
-      chalk.cyanBright('\x1b]8;;https://github.com/vava-nessa\x1b\\vava-nessa\x1b]8;;\x1b\\') +
-      chalk.dim('  •  ☕ ') +
-      chalk.rgb(255, 200, 100)('\x1b]8;;https://buymeacoffee.com/vavanessadev\x1b\\Buy me a coffee\x1b]8;;\x1b\\') +
-      chalk.dim('  •  ') +
+      themeColors.dim('  ') +
+      themeColors.footerLove('Made with 💖 & ☕ by ') +
+      themeColors.link('\x1b]8;;https://github.com/vava-nessa\x1b\\vava-nessa\x1b]8;;\x1b\\') +
+      themeColors.dim('  •  ☕ ') +
+      themeColors.footerCoffee('\x1b]8;;https://buymeacoffee.com/vavanessadev\x1b\\Buy me a coffee\x1b]8;;\x1b\\') +
+      themeColors.dim('  •  ') +
       'Esc to close'
     )
 
@@ -323,37 +329,36 @@ export function createOverlayRenderers(state, deps) {
 
     lines.push('')
     // 📖 Branding header
-    lines.push(`  ${chalk.cyanBright('🚀')} ${chalk.bold.cyanBright('free-coding-models')} ${chalk.dim(`v${LOCAL_VERSION}`)}`)
-    lines.push(`  ${chalk.bold('🔌 Install Endpoints')}`)
+    lines.push(`  ${themeColors.accent('🚀')} ${themeColors.accentBold('free-coding-models')} ${themeColors.dim(`v${LOCAL_VERSION}`)}`)
+    lines.push(`  ${themeColors.textBold('🔌 Install Endpoints')}`)
     lines.push('')
-    lines.push(chalk.dim('  — install provider catalogs into supported coding tools'))
+    lines.push(themeColors.dim('  — install provider catalogs into supported coding tools'))
     if (state.installEndpointsErrorMsg) {
-      lines.push(`  ${chalk.yellow(state.installEndpointsErrorMsg)}`)
+      lines.push(`  ${themeColors.warning(state.installEndpointsErrorMsg)}`)
     }
     lines.push('')
 
     if (state.installEndpointsPhase === 'providers') {
-      lines.push(`  ${chalk.bold(`Step 1/${totalSteps}`)}  ${chalk.cyan('Choose a configured provider')}`)
+      lines.push(`  ${themeColors.textBold(`Step 1/${totalSteps}`)}  ${themeColors.info('Choose a configured provider')}`)
       lines.push('')
 
       if (providerChoices.length === 0) {
-        lines.push(chalk.dim('  No configured providers can be installed directly right now.'))
-        lines.push(chalk.dim('  Add an API key in Settings (`P`) first, then reopen this screen.'))
+        lines.push(themeColors.dim('  No configured providers can be installed directly right now.'))
+        lines.push(themeColors.dim('  Add an API key in Settings (`P`) first, then reopen this screen.'))
       } else {
         providerChoices.forEach((provider, idx) => {
           const isCursor = idx === state.installEndpointsCursor
-          const bullet = isCursor ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
-          const row = `${bullet}${chalk.bold(provider.label.padEnd(24))} ${chalk.dim(`${provider.modelCount} models`)}`
+          const row = `${bullet(isCursor)}${themeColors.textBold(provider.label.padEnd(24))} ${themeColors.dim(`${provider.modelCount} models`)}`
           cursorLineByRow[idx] = lines.length
           lines.push(isCursor ? themeColors.bgCursorInstall(row) : row)
         })
       }
 
       lines.push('')
-      lines.push(chalk.dim('  ↑↓ Navigate  •  Enter Choose provider  •  Esc Close'))
+      lines.push(themeColors.dim('  ↑↓ Navigate  •  Enter Choose provider  •  Esc Close'))
     } else if (state.installEndpointsPhase === 'tools') {
-      lines.push(`  ${chalk.bold(`Step 2/${totalSteps}`)}  ${chalk.cyan('Choose the target tool')}`)
-      lines.push(chalk.dim(`  Provider: ${selectedProviderLabel}`))
+      lines.push(`  ${themeColors.textBold(`Step 2/${totalSteps}`)}  ${themeColors.info('Choose the target tool')}`)
+      lines.push(themeColors.dim(`  Provider: ${selectedProviderLabel}`))
       lines.push('')
 
       // 📖 Use getToolMeta for labels instead of hard-coded ternary chains
@@ -362,60 +367,57 @@ export function createOverlayRenderers(state, deps) {
         const meta = getToolMeta(toolMode)
         const label = `${meta.emoji} ${meta.label}`
         const note = toolMode.startsWith('opencode')
-          ? chalk.dim('shared config file')
+          ? themeColors.dim('shared config file')
           : toolMode === 'openhands'
-            ? chalk.dim('env file (~/.fcm-*-env)')
-            : chalk.dim('managed config install')
-        const bullet = isCursor ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
-        const row = `${bullet}${chalk.bold(label.padEnd(26))} ${note}`
+            ? themeColors.dim('env file (~/.fcm-*-env)')
+            : themeColors.dim('managed config install')
+        const row = `${bullet(isCursor)}${themeColors.textBold(label.padEnd(26))} ${note}`
         cursorLineByRow[idx] = lines.length
         lines.push(isCursor ? themeColors.bgCursorInstall(row) : row)
       })
 
       lines.push('')
-      lines.push(chalk.dim('  ↑↓ Navigate  •  Enter Choose tool  •  Esc Back'))
+      lines.push(themeColors.dim('  ↑↓ Navigate  •  Enter Choose tool  •  Esc Back'))
     } else if (state.installEndpointsPhase === 'scope') {
-      lines.push(`  ${chalk.bold(`Step 3/${totalSteps}`)}  ${chalk.cyan('Choose the install scope')}`)
-      lines.push(chalk.dim(`  Provider: ${selectedProviderLabel}  •  Tool: ${selectedToolLabel}  •  ${selectedConnectionLabel}`))
+      lines.push(`  ${themeColors.textBold(`Step 3/${totalSteps}`)}  ${themeColors.info('Choose the install scope')}`)
+      lines.push(themeColors.dim(`  Provider: ${selectedProviderLabel}  •  Tool: ${selectedToolLabel}  •  ${selectedConnectionLabel}`))
       lines.push('')
 
       scopeChoices.forEach((scope, idx) => {
         const isCursor = idx === state.installEndpointsCursor
-        const bullet = isCursor ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
-        const row = `${bullet}${chalk.bold(scope.label)}`
+        const row = `${bullet(isCursor)}${themeColors.textBold(scope.label)}`
         cursorLineByRow[idx] = lines.length
         lines.push(isCursor ? themeColors.bgCursorInstall(row) : row)
-        lines.push(chalk.dim(`      ${scope.hint}`))
+        lines.push(themeColors.dim(`      ${scope.hint}`))
         lines.push('')
       })
 
-      lines.push(chalk.dim('  Enter Continue  •  Esc Back'))
+      lines.push(themeColors.dim('  Enter Continue  •  Esc Back'))
     } else if (state.installEndpointsPhase === 'models') {
       const models = getProviderCatalogModels(state.installEndpointsProviderKey)
       const selectedCount = state.installEndpointsSelectedModelIds.size
 
-      lines.push(`  ${chalk.bold(`Step 4/${totalSteps}`)}  ${chalk.cyan('Choose which models to install')}`)
-      lines.push(chalk.dim(`  Provider: ${selectedProviderLabel}  •  Tool: ${selectedToolLabel}  •  ${selectedConnectionLabel}`))
-      lines.push(chalk.dim(`  Selected: ${selectedCount}/${models.length}`))
+      lines.push(`  ${themeColors.textBold(`Step 4/${totalSteps}`)}  ${themeColors.info('Choose which models to install')}`)
+      lines.push(themeColors.dim(`  Provider: ${selectedProviderLabel}  •  Tool: ${selectedToolLabel}  •  ${selectedConnectionLabel}`))
+      lines.push(themeColors.dim(`  Selected: ${selectedCount}/${models.length}`))
       lines.push('')
 
       models.forEach((model, idx) => {
         const isCursor = idx === state.installEndpointsCursor
         const selected = state.installEndpointsSelectedModelIds.has(model.modelId)
-        const bullet = isCursor ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
-        const checkbox = selected ? chalk.greenBright('[✓]') : chalk.dim('[ ]')
-        const tier = chalk.cyan(model.tier.padEnd(2))
-        const row = `${bullet}${checkbox} ${chalk.bold(model.label.padEnd(26))} ${tier} ${chalk.dim(model.ctx.padEnd(6))} ${chalk.dim(model.modelId)}`
+        const checkbox = selected ? themeColors.successBold('[✓]') : themeColors.dim('[ ]')
+        const tier = themeColors.info(model.tier.padEnd(2))
+        const row = `${bullet(isCursor)}${checkbox} ${themeColors.textBold(model.label.padEnd(26))} ${tier} ${themeColors.dim(model.ctx.padEnd(6))} ${themeColors.dim(model.modelId)}`
         cursorLineByRow[idx] = lines.length
         lines.push(isCursor ? themeColors.bgCursorInstall(row) : row)
       })
 
       lines.push('')
-      lines.push(chalk.dim('  ↑↓ Navigate  •  Space Toggle model  •  A All/None  •  Enter Install  •  Esc Back'))
+      lines.push(themeColors.dim('  ↑↓ Navigate  •  Space Toggle model  •  A All/None  •  Enter Install  •  Esc Back'))
     } else if (state.installEndpointsPhase === 'result') {
       const result = state.installEndpointsResult
-      const accent = result?.type === 'success' ? chalk.greenBright : chalk.redBright
-      lines.push(`  ${chalk.bold('Result')}  ${accent(result?.title || 'Install result unavailable')}`)
+      const accent = result?.type === 'success' ? themeColors.successBold : themeColors.errorBold
+      lines.push(`  ${themeColors.textBold('Result')}  ${accent(result?.title || 'Install result unavailable')}`)
       lines.push('')
 
       for (const detail of result?.lines || []) {
@@ -424,14 +426,100 @@ export function createOverlayRenderers(state, deps) {
 
       if (result?.type === 'success') {
         lines.push('')
-        lines.push(chalk.dim('  Future FCM launches will refresh this catalog automatically when the provider list evolves.'))
+        lines.push(themeColors.dim('  Future FCM launches will refresh this catalog automatically when the provider list evolves.'))
       }
 
       lines.push('')
-      lines.push(chalk.dim('  Enter or Esc Close'))
+      lines.push(themeColors.dim('  Enter or Esc Close'))
     }
 
     const targetLine = cursorLineByRow[state.installEndpointsCursor] ?? 0
+    state.toolInstallPromptScrollOffset = keepOverlayTargetVisible(
+      state.toolInstallPromptScrollOffset,
+      targetLine,
+      lines.length,
+      state.terminalRows
+    )
+    const { visible, offset } = sliceOverlayLines(lines, state.toolInstallPromptScrollOffset, state.terminalRows)
+    state.toolInstallPromptScrollOffset = offset
+
+    const tintedLines = tintOverlayLines(visible, themeColors.overlayBgSettings, state.terminalCols)
+    const cleared = tintedLines.map((line) => line + EL)
+    return cleared.join('\n')
+  }
+
+  // ─── Missing-tool install confirmation overlay ────────────────────────────
+  // 📖 renderToolInstallPrompt keeps the user inside the TUI long enough to
+  // 📖 confirm the auto-install, then the key handler exits the alt screen and
+  // 📖 runs the official installer before retrying the selected launch.
+  function renderToolInstallPrompt() {
+    const EL = '\x1b[K'
+    const lines = []
+    const cursorLineByRow = {}
+    const installPlan = state.toolInstallPromptPlan || getToolInstallPlan(state.toolInstallPromptMode)
+    const toolMeta = state.toolInstallPromptMode ? getToolMeta(state.toolInstallPromptMode) : null
+    const selectedModel = state.toolInstallPromptModel
+    const options = [
+      {
+        label: 'Yes, install it now',
+        hint: installPlan?.summary || 'Run the official installer, then continue with the selected model.',
+      },
+      {
+        label: 'No, go back',
+        hint: 'Return to the model list without installing anything.',
+      },
+    ]
+
+    lines.push(`  ${chalk.cyanBright('🚀')} ${chalk.bold.cyanBright('free-coding-models')}`)
+    lines.push(`  ${chalk.bold('📦 Missing Tool')}`)
+    lines.push('')
+
+    if (!toolMeta || !installPlan) {
+      lines.push(chalk.red('  No install metadata is available for the selected tool.'))
+      lines.push('')
+      lines.push(chalk.dim('  Esc Close'))
+    } else {
+      const title = `${toolMeta.emoji} ${toolMeta.label}`
+      lines.push(`  ${chalk.bold(title)} is not installed on this machine.`)
+      lines.push(chalk.dim(`  Selected model: ${selectedModel?.label || 'Unknown model'}`))
+      lines.push('')
+
+      if (!installPlan.supported) {
+        lines.push(chalk.yellow(`  ${installPlan.reason || 'FCM cannot auto-install this tool on the current platform.'}`))
+        if (installPlan.docsUrl) {
+          lines.push(chalk.dim(`  Docs: ${installPlan.docsUrl}`))
+        }
+        lines.push('')
+        lines.push(chalk.dim('  Enter or Esc Close'))
+      } else {
+        lines.push(chalk.dim(`  Command: ${installPlan.shellCommand}`))
+        if (installPlan.note) {
+          lines.push(chalk.dim(`  Note: ${installPlan.note}`))
+        }
+        if (installPlan.docsUrl) {
+          lines.push(chalk.dim(`  Docs: ${installPlan.docsUrl}`))
+        }
+        if (state.toolInstallPromptErrorMsg) {
+          lines.push('')
+          lines.push(chalk.yellow(`  ${state.toolInstallPromptErrorMsg}`))
+        }
+        lines.push('')
+
+        options.forEach((option, idx) => {
+          const isCursor = idx === state.toolInstallPromptCursor
+          const bullet = isCursor ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
+          const row = `${bullet}${chalk.bold(option.label)}`
+          cursorLineByRow[idx] = lines.length
+          lines.push(isCursor ? themeColors.bgCursorInstall(row) : row)
+          lines.push(chalk.dim(`      ${option.hint}`))
+          lines.push('')
+        })
+
+        lines.push(chalk.dim('  ↑↓ Navigate  •  Enter Confirm  •  Esc Cancel'))
+      }
+    }
+
+    const targetLine = cursorLineByRow[state.toolInstallPromptCursor] ?? 0
     state.installEndpointsScrollOffset = keepOverlayTargetVisible(
       state.installEndpointsScrollOffset,
       targetLine,
@@ -452,85 +540,92 @@ export function createOverlayRenderers(state, deps) {
   function renderHelp() {
     const EL = '\x1b[K'
     const lines = []
+    const label = themeColors.info
+    const hint = themeColors.dim
+    const key = themeColors.hotkey
+    const heading = themeColors.textBold
 
     // 📖 Branding header
-    lines.push(`  ${chalk.cyanBright('🚀')} ${chalk.bold.cyanBright('free-coding-models')} ${chalk.dim(`v${LOCAL_VERSION}`)}`)
-    lines.push(`  ${chalk.bold('❓ Help & Keyboard Shortcuts')}`)
+    lines.push(`  ${themeColors.accent('🚀')} ${themeColors.accentBold('free-coding-models')} ${themeColors.dim(`v${LOCAL_VERSION}`)}`)
+    lines.push(`  ${heading('❓ Help & Keyboard Shortcuts')}`)
     lines.push('')
-    lines.push(`  ${chalk.dim('— ↑↓ / PgUp / PgDn / Home / End scroll • K or Esc close')}`)
-    lines.push(`  ${chalk.bold('Columns')}`)
+    lines.push(`  ${hint('— ↑↓ / PgUp / PgDn / Home / End scroll • K or Esc close')}`)
+    lines.push(`  ${heading('Columns')}`)
     lines.push('')
-    lines.push(`  ${chalk.cyan('Rank')}        SWE-bench rank (1 = best coding score)  ${chalk.dim('Sort:')} ${chalk.yellow('R')}`)
-    lines.push(`              ${chalk.dim('Quick glance at which model is objectively the best coder right now.')}`)
+    lines.push(`  ${label('Rank')}        SWE-bench rank (1 = best coding score)  ${hint('Sort:')} ${key('R')}`)
+    lines.push(`              ${hint('Quick glance at which model is objectively the best coder right now.')}`)
     lines.push('')
-    lines.push(`  ${chalk.cyan('Tier')}        S+ / S / A+ / A / A- / B+ / B / C based on SWE-bench score  ${chalk.dim('Cycle:')} ${chalk.yellow('T')}`)
-    lines.push(`              ${chalk.dim('Skip the noise — S/S+ models solve real GitHub issues, C models are for light tasks.')}`)
+    lines.push(`  ${label('Tier')}        S+ / S / A+ / A / A- / B+ / B / C based on SWE-bench score  ${hint('Cycle:')} ${key('T')}`)
+    lines.push(`              ${hint('Skip the noise — S/S+ models solve real GitHub issues, C models are for light tasks.')}`)
     lines.push('')
-    lines.push(`  ${chalk.cyan('SWE%')}        SWE-bench score — coding ability benchmark (color-coded)  ${chalk.dim('Sort:')} ${chalk.yellow('S')}`)
-    lines.push(`              ${chalk.dim('The raw number behind the tier. Higher = better at writing, fixing, and refactoring code.')}`)
+    lines.push(`  ${label('SWE%')}        SWE-bench score — coding ability benchmark (color-coded)  ${hint('Sort:')} ${key('S')}`)
+    lines.push(`              ${hint('The raw number behind the tier. Higher = better at writing, fixing, and refactoring code.')}`)
     lines.push('')
-    lines.push(`  ${chalk.cyan('CTX')}         Context window size (128k, 200k, 256k, 1m, etc.)  ${chalk.dim('Sort:')} ${chalk.yellow('C')}`)
-    lines.push(`              ${chalk.dim('Bigger context = the model can read more of your codebase at once without forgetting.')}`)
+    lines.push(`  ${label('CTX')}         Context window size (128k, 200k, 256k, 1m, etc.)  ${hint('Sort:')} ${key('C')}`)
+    lines.push(`              ${hint('Bigger context = the model can read more of your codebase at once without forgetting.')}`)
     lines.push('')
-    lines.push(`  ${chalk.cyan('Model')}       Model name (⭐ = favorited, pinned at top)  ${chalk.dim('Sort:')} ${chalk.yellow('M')}  ${chalk.dim('Favorite:')} ${chalk.yellow('F')}`)
-    lines.push(`              ${chalk.dim('Star the ones you like — they stay pinned at the top across restarts.')}`)
+    lines.push(`  ${label('Model')}       Model name (⭐ = favorited, pinned at top)  ${hint('Sort:')} ${key('M')}  ${hint('Favorite:')} ${key('F')}`)
+    lines.push(`              ${hint('Star the ones you like — they stay pinned at the top across restarts.')}`)
     lines.push('')
-    lines.push(`  ${chalk.cyan('Provider')}    Provider source (NIM, Groq, Cerebras, etc.)  ${chalk.dim('Sort:')} ${chalk.yellow('O')}  ${chalk.dim('Cycle:')} ${chalk.yellow('D')}`)
-    lines.push(`              ${chalk.dim('Same model on different providers can have very different speed and uptime.')}`)
+    lines.push(`  ${label('Provider')}    Provider source (NIM, Groq, Cerebras, etc.)  ${hint('Sort:')} ${key('O')}  ${hint('Cycle:')} ${key('D')}`)
+    lines.push(`              ${hint('Same model on different providers can have very different speed and uptime.')}`)
     lines.push('')
-    lines.push(`  ${chalk.cyan('Latest')}      Most recent ping response time (ms)  ${chalk.dim('Sort:')} ${chalk.yellow('L')}`)
-    lines.push(`              ${chalk.dim('Shows how fast the server is responding right now — useful to catch live slowdowns.')}`)
+    lines.push(`  ${label('Latest')}      Most recent ping response time (ms)  ${hint('Sort:')} ${key('L')}`)
+    lines.push(`              ${hint('Shows how fast the server is responding right now — useful to catch live slowdowns.')}`)
     lines.push('')
-    lines.push(`  ${chalk.cyan('Avg Ping')}    Average response time across all measurable pings (200 + 401) (ms)  ${chalk.dim('Sort:')} ${chalk.yellow('A')}`)
-    lines.push(`              ${chalk.dim('The long-term truth. Even without a key, a 401 still gives real latency so the average stays useful.')}`)
+    lines.push(`  ${label('Avg Ping')}    Average response time across all measurable pings (200 + 401) (ms)  ${hint('Sort:')} ${key('A')}`)
+    lines.push(`              ${hint('The long-term truth. Even without a key, a 401 still gives real latency so the average stays useful.')}`)
     lines.push('')
-    lines.push(`  ${chalk.cyan('Health')}      Live status: ✅ UP / 🔥 429 / ⏳ TIMEOUT / ❌ ERR / 🔑 NO KEY  ${chalk.dim('Sort:')} ${chalk.yellow('H')}`)
-    lines.push(`              ${chalk.dim('Tells you instantly if a model is reachable or down — no guesswork needed.')}`)
+    lines.push(`  ${label('Health')}      Live status: ✅ UP / 🔥 429 / ⏳ TIMEOUT / ❌ ERR / 🔑 NO KEY  ${hint('Sort:')} ${key('H')}`)
+    lines.push(`              ${hint('Tells you instantly if a model is reachable or down — no guesswork needed.')}`)
     lines.push('')
-    lines.push(`  ${chalk.cyan('Verdict')}     Overall assessment: Perfect / Normal / Spiky / Slow / Overloaded  ${chalk.dim('Sort:')} ${chalk.yellow('V')}`)
-    lines.push(`              ${chalk.dim('One-word summary so you don\'t have to cross-check speed, health, and stability yourself.')}`)
+    lines.push(`  ${label('Verdict')}     Overall assessment: Perfect / Normal / Spiky / Slow / Overloaded  ${hint('Sort:')} ${key('V')}`)
+    lines.push(`              ${hint('One-word summary so you don\'t have to cross-check speed, health, and stability yourself.')}`)
     lines.push('')
-    lines.push(`  ${chalk.cyan('Stability')}   Composite 0–100 score: p95 + jitter + spike rate + uptime  ${chalk.dim('Sort:')} ${chalk.yellow('B')}`)
-    lines.push(`              ${chalk.dim('A fast model that randomly freezes is worse than a steady one. This catches that.')}`)
+    lines.push(`  ${label('Stability')}   Composite 0–100 score: p95 + jitter + spike rate + uptime  ${hint('Sort:')} ${key('B')}`)
+    lines.push(`              ${hint('A fast model that randomly freezes is worse than a steady one. This catches that.')}`)
     lines.push('')
-    lines.push(`  ${chalk.cyan('Up%')}         Uptime — ratio of successful pings to total pings  ${chalk.dim('Sort:')} ${chalk.yellow('U')}`)
-    lines.push(`              ${chalk.dim('If a model only works half the time, you\'ll waste time retrying. Higher = more reliable.')}`)
+    lines.push(`  ${label('Up%')}         Uptime — ratio of successful pings to total pings  ${hint('Sort:')} ${key('U')}`)
+    lines.push(`              ${hint('If a model only works half the time, you\'ll waste time retrying. Higher = more reliable.')}`)
     lines.push('')
-    lines.push(`  ${chalk.cyan('Used')}        Historical prompt+completion tokens tracked for this exact provider/model pair`)
-    lines.push(`              ${chalk.dim('Loaded from local stats snapshots. Displayed in K tokens, or M tokens above one million.')}`)
+    lines.push(`  ${label('Used')}        Historical prompt+completion tokens tracked for this exact provider/model pair`)
+    lines.push(`              ${hint('Loaded from local stats snapshots. Displayed in K tokens, or M tokens above one million.')}`)
     lines.push('')
 
 
     lines.push('')
-    lines.push(`  ${chalk.bold('Main TUI')}`)
-    lines.push(`  ${chalk.bold('Navigation')}`)
-    lines.push(`  ${chalk.yellow('↑↓')}           Navigate rows`)
-    lines.push(`  ${chalk.yellow('Enter')}        Select model and launch`)
+    lines.push(`  ${heading('Main TUI')}`)
+    lines.push(`  ${heading('Navigation')}`)
+    lines.push(`  ${key('↑↓')}           Navigate rows`)
+    lines.push(`  ${key('Enter')}        Select model and launch`)
+    lines.push(`              ${hint('If the active CLI is missing, FCM offers a one-click install prompt first.')}`)
     lines.push('')
-    lines.push(`  ${chalk.bold('Controls')}`)
-    lines.push(`  ${chalk.yellow('W')}  Toggle ping mode  ${chalk.dim('(speed 2s → normal 10s → slow 30s → forced 4s)')}`)
-    lines.push(`  ${chalk.yellow('E')}  Toggle configured models only  ${chalk.dim('(enabled by default)')}`)
-    lines.push(`  ${chalk.yellow('Z')}  Cycle tool mode  ${chalk.dim('(OpenCode → Desktop → OpenClaw → Crush → Goose → Pi → Aider → Qwen → OpenHands → Amp)')}`)
-    lines.push(`  ${chalk.yellow('F')}  Toggle favorite on selected row  ${chalk.dim('(⭐ pinned at top, persisted)')}`)
-    lines.push(`  ${chalk.yellow('Y')}  Install endpoints  ${chalk.dim('(provider catalog → compatible tools, direct provider only)')}`)
-    lines.push(`  ${chalk.yellow('Q')}  Smart Recommend  ${chalk.dim('(🎯 find the best model for your task — questionnaire + live analysis)')}`)
-    lines.push(`  ${chalk.rgb(255, 87, 51).bold('I')}  Feedback, bugs & requests  ${chalk.dim('(📝 send anonymous feedback, bug reports, or feature requests)')}`)
-    lines.push(`  ${chalk.yellow('P')}  Open settings  ${chalk.dim('(manage API keys, provider toggles, updates, legacy cleanup)')}`)
+    lines.push(`  ${heading('Controls')}`)
+    lines.push(`  ${key('W')}  Toggle ping mode  ${hint('(speed 2s → normal 10s → slow 30s → forced 4s)')}`)
+    lines.push(`  ${key('E')}  Toggle configured models only  ${hint('(enabled by default)')}`)
+    lines.push(`  ${key('Z')}  Cycle tool mode  ${hint('(OpenCode → Desktop → OpenClaw → Crush → Goose → Pi → Aider → Qwen → OpenHands → Amp)')}`)
+    lines.push(`  ${key('F')}  Toggle favorite on selected row  ${hint('(⭐ pinned at top, persisted)')}`)
+    lines.push(`  ${key('Y')}  Install endpoints  ${hint('(provider catalog → compatible tools, direct provider only)')}`)
+    lines.push(`  ${key('Q')}  Smart Recommend  ${hint('(🎯 find the best model for your task — questionnaire + live analysis)')}`)
+    lines.push(`  ${key('G')}  Cycle theme  ${hint('(auto → dark → light)')}`)
+    lines.push(`  ${themeColors.errorBold('I')}  Feedback, bugs & requests  ${hint('(📝 send anonymous feedback, bug reports, or feature requests)')}`)
+    lines.push(`  ${key('P')}  Open settings  ${hint('(manage API keys, provider toggles, updates, legacy cleanup)')}`)
       // 📖 Profile system removed - API keys now persist permanently across all sessions
-    lines.push(`  ${chalk.yellow('Shift+R')}  Reset view settings  ${chalk.dim('(tier filter, sort, provider filter → defaults)')}`)
-    lines.push(`  ${chalk.yellow('N')}  Changelog  ${chalk.dim('(📋 browse all versions, Enter to view details)')}`)
-    lines.push(`  ${chalk.yellow('K')} / ${chalk.yellow('Esc')}  Show/hide this help`)
-    lines.push(`  ${chalk.yellow('Ctrl+C')}  Exit`)
+    lines.push(`  ${key('Shift+R')}  Reset view settings  ${hint('(tier filter, sort, provider filter → defaults)')}`)
+    lines.push(`  ${key('N')}  Changelog  ${hint('(📋 browse all versions, Enter to view details)')}`)
+    lines.push(`  ${key('K')} / ${key('Esc')}  Show/hide this help`)
+    lines.push(`  ${key('Ctrl+C')}  Exit`)
     lines.push('')
-    lines.push(`  ${chalk.bold('Settings (P)')}`)
-    lines.push(`  ${chalk.yellow('↑↓')}           Navigate rows`)
-    lines.push(`  ${chalk.yellow('PgUp/PgDn')}    Jump by page`)
-    lines.push(`  ${chalk.yellow('Home/End')}     Jump first/last row`)
-    lines.push(`  ${chalk.yellow('Enter')}        Edit key / run selected maintenance action`)
-    lines.push(`  ${chalk.yellow('Space')}        Toggle provider enable/disable`)
-    lines.push(`  ${chalk.yellow('T')}            Test selected provider key`)
-    lines.push(`  ${chalk.yellow('U')}            Check updates manually`)
-    lines.push(`  ${chalk.yellow('Esc')}          Close settings`)
+    lines.push(`  ${heading('Settings (P)')}`)
+    lines.push(`  ${key('↑↓')}           Navigate rows`)
+    lines.push(`  ${key('PgUp/PgDn')}    Jump by page`)
+    lines.push(`  ${key('Home/End')}     Jump first/last row`)
+    lines.push(`  ${key('Enter')}        Edit key / run selected maintenance action`)
+    lines.push(`  ${key('Space')}        Toggle provider enable/disable`)
+    lines.push(`  ${key('T')}            Test selected provider key`)
+    lines.push(`  ${key('U')}            Check updates manually`)
+    lines.push(`  ${key('G')}            Cycle theme globally`)
+    lines.push(`  ${key('Esc')}          Close settings`)
     lines.push('')
     lines.push(...buildCliHelpLines({ chalk, indent: '  ', title: 'CLI Flags' }))
     lines.push('')
@@ -552,10 +647,10 @@ export function createOverlayRenderers(state, deps) {
 
     // 📖 Branding header
     lines.push('')
-    lines.push(`  ${chalk.cyanBright('🚀')} ${chalk.bold.cyanBright('free-coding-models')} ${chalk.dim(`v${LOCAL_VERSION}`)}`)
-    lines.push(`  ${chalk.bold('🎯 Smart Recommend')}`)
+    lines.push(`  ${themeColors.accent('🚀')} ${themeColors.accentBold('free-coding-models')} ${themeColors.dim(`v${LOCAL_VERSION}`)}`)
+    lines.push(`  ${themeColors.textBold('🎯 Smart Recommend')}`)
     lines.push('')
-    lines.push(chalk.dim('  — find the best model for your task'))
+    lines.push(themeColors.dim('  — find the best model for your task'))
     lines.push('')
 
     if (state.recommendPhase === 'questionnaire') {
@@ -588,7 +683,7 @@ export function createOverlayRenderers(state, deps) {
         const answered = state.recommendAnswers[questions[i].answerKey]
         if (i < state.recommendQuestion && answered) {
           const answeredLabel = questions[i].options.find(o => o.key === answered)?.label || answered
-          breadcrumbs += chalk.greenBright(`  ✓ ${questions[i].title} ${chalk.bold(answeredLabel)}`) + '\n'
+          breadcrumbs += themeColors.successBold(`  ✓ ${questions[i].title} ${themeColors.textBold(answeredLabel)}`) + '\n'
         }
       }
       if (breadcrumbs) {
@@ -596,19 +691,18 @@ export function createOverlayRenderers(state, deps) {
         lines.push('')
       }
 
-      lines.push(`  ${chalk.bold(`Question ${qNum}/${qTotal}:`)} ${chalk.cyan(q.title)}`)
+      lines.push(`  ${themeColors.textBold(`Question ${qNum}/${qTotal}:`)} ${themeColors.info(q.title)}`)
       lines.push('')
 
       for (let i = 0; i < q.options.length; i++) {
         const opt = q.options[i]
         const isCursor = i === state.recommendCursor
-        const bullet = isCursor ? chalk.bold.cyan('  ❯ ') : chalk.dim('    ')
         const label = isCursor ? themeColors.textBold(opt.label) : themeColors.text(opt.label)
-        lines.push(`${bullet}${label}`)
+        lines.push(`${bullet(isCursor)}${label}`)
       }
 
       lines.push('')
-      lines.push(chalk.dim('  ↑↓ navigate  •  Enter select  •  Esc cancel'))
+      lines.push(themeColors.dim('  ↑↓ navigate  •  Enter select  •  Esc cancel'))
 
     } else if (state.recommendPhase === 'analyzing') {
       // 📖 Loading screen with progress bar
@@ -616,38 +710,38 @@ export function createOverlayRenderers(state, deps) {
       const barWidth = 40
       const filled = Math.round(barWidth * pct / 100)
       const empty = barWidth - filled
-      const bar = chalk.greenBright('█'.repeat(filled)) + chalk.dim('░'.repeat(empty))
+      const bar = themeColors.successBold('█'.repeat(filled)) + themeColors.dim('░'.repeat(empty))
 
-      lines.push(`  ${chalk.bold('Analyzing models...')}`)
+      lines.push(`  ${themeColors.textBold('Analyzing models...')}`)
       lines.push('')
-      lines.push(`  ${bar}  ${chalk.bold(String(pct) + '%')}`)
+      lines.push(`  ${bar}  ${themeColors.textBold(String(pct) + '%')}`)
       lines.push('')
 
       // 📖 Show what we're doing
       const taskLabel = TASK_TYPES[state.recommendAnswers.taskType]?.label || '—'
       const prioLabel = PRIORITY_TYPES[state.recommendAnswers.priority]?.label || '—'
       const ctxLabel = CONTEXT_BUDGETS[state.recommendAnswers.contextBudget]?.label || '—'
-      lines.push(chalk.dim(`  Task: ${taskLabel}  •  Priority: ${prioLabel}  •  Context: ${ctxLabel}`))
+      lines.push(themeColors.dim(`  Task: ${taskLabel}  •  Priority: ${prioLabel}  •  Context: ${ctxLabel}`))
       lines.push('')
 
       // 📖 Spinning indicator
       const spinIdx = state.frame % FRAMES.length
-      lines.push(`  ${chalk.yellow(FRAMES[spinIdx])} Pinging models at 2 pings/sec to gather fresh latency data...`)
+      lines.push(`  ${themeColors.warning(FRAMES[spinIdx])} Pinging models at 2 pings/sec to gather fresh latency data...`)
       lines.push('')
-      lines.push(chalk.dim('  Esc to cancel'))
+      lines.push(themeColors.dim('  Esc to cancel'))
 
     } else if (state.recommendPhase === 'results') {
       // 📖 Show Top 3 results with detailed info
       const taskLabel = TASK_TYPES[state.recommendAnswers.taskType]?.label || '—'
       const prioLabel = PRIORITY_TYPES[state.recommendAnswers.priority]?.label || '—'
       const ctxLabel = CONTEXT_BUDGETS[state.recommendAnswers.contextBudget]?.label || '—'
-      lines.push(chalk.dim(`  Task: ${taskLabel}  •  Priority: ${prioLabel}  •  Context: ${ctxLabel}`))
+      lines.push(themeColors.dim(`  Task: ${taskLabel}  •  Priority: ${prioLabel}  •  Context: ${ctxLabel}`))
       lines.push('')
 
       if (state.recommendResults.length === 0) {
-        lines.push(`  ${chalk.yellow('No models could be scored. Try different criteria or wait for more pings.')}`)
+        lines.push(`  ${themeColors.warning('No models could be scored. Try different criteria or wait for more pings.')}`)
       } else {
-        lines.push(`  ${chalk.bold('Top Recommendations:')}`)
+        lines.push(`  ${themeColors.textBold('Top Recommendations:')}`)
         lines.push('')
 
         for (let i = 0; i < state.recommendResults.length; i++) {
@@ -655,7 +749,7 @@ export function createOverlayRenderers(state, deps) {
           const r = rec.result
           const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : '🥉'
           const providerName = sources[r.providerKey]?.name ?? r.providerKey
-          const tierFn = TIER_COLOR[r.tier] ?? (t => chalk.white(t))
+          const tierFn = TIER_COLOR[r.tier] ?? ((text) => themeColors.text(text))
           const avg = getAvg(r)
           const avgStr = avg === Infinity ? '—' : Math.round(avg) + 'ms'
           const sweStr = r.sweScore ?? '—'
@@ -664,18 +758,18 @@ export function createOverlayRenderers(state, deps) {
           const stabStr = stability === -1 ? '—' : String(stability)
 
           const isCursor = i === state.recommendCursor
-          const highlight = isCursor ? themeColors.bgCursor : (s => s)
+          const highlight = isCursor ? themeColors.bgCursor : (text) => text
 
-          lines.push(highlight(`  ${medal} ${chalk.bold('#' + (i + 1))}  ${themeColors.textBold(r.label)}  ${chalk.dim('(' + providerName + ')')}`))
-          lines.push(highlight(`       Score: ${chalk.bold.greenBright(String(rec.score) + '/100')}  │  Tier: ${tierFn(r.tier)}  │  SWE: ${chalk.cyan(sweStr)}  │  Avg: ${chalk.yellow(avgStr)}  │  CTX: ${chalk.cyan(ctxStr)}  │  Stability: ${chalk.cyan(stabStr)}`))
+          lines.push(highlight(`  ${medal} ${themeColors.textBold('#' + (i + 1))}  ${themeColors.textBold(r.label)}  ${themeColors.dim('(' + providerName + ')')}`))
+          lines.push(highlight(`       Score: ${themeColors.successBold(String(rec.score) + '/100')}  │  Tier: ${tierFn(r.tier)}  │  SWE: ${themeColors.info(sweStr)}  │  Avg: ${themeColors.warning(avgStr)}  │  CTX: ${themeColors.info(ctxStr)}  │  Stability: ${themeColors.info(stabStr)}`))
           lines.push('')
         }
       }
 
       lines.push('')
-      lines.push(`  ${chalk.dim('These models are now')} ${chalk.greenBright('highlighted')} ${chalk.dim('and')} 🎯 ${chalk.dim('pinned in the main table.')}`)
+      lines.push(`  ${themeColors.dim('These models are now')} ${themeColors.successBold('highlighted')} ${themeColors.dim('and')} 🎯 ${themeColors.dim('pinned in the main table.')}`)
       lines.push('')
-      lines.push(chalk.dim('  ↑↓ navigate  •  Enter select & close  •  Esc close  •  Q new search'))
+      lines.push(themeColors.dim('  ↑↓ navigate  •  Enter select & close  •  Esc close  •  Q new search'))
     }
 
     lines.push('')
@@ -782,34 +876,34 @@ export function createOverlayRenderers(state, deps) {
 
     // 📖 Branding header
     lines.push('')
-    lines.push(`  ${chalk.cyanBright('🚀')} ${chalk.bold.cyanBright('free-coding-models')} ${chalk.dim(`v${LOCAL_VERSION}`)}`)
-    lines.push(`  ${chalk.bold.rgb(57, 255, 20)('📝 Feedback, bugs & requests')}`)
+    lines.push(`  ${themeColors.accent('🚀')} ${themeColors.accentBold('free-coding-models')} ${themeColors.dim(`v${LOCAL_VERSION}`)}`)
+    lines.push(`  ${themeColors.successBold('📝 Feedback, bugs & requests')}`)
     lines.push('')
-    lines.push(chalk.dim("  — don't hesitate to send us feedback, bug reports, or just your feeling about the app"))
+    lines.push(themeColors.dim("  — don't hesitate to send us feedback, bug reports, or just your feeling about the app"))
     lines.push('')
     
     // 📖 Status messages (if any)
     if (state.bugReportStatus === 'sending') {
-      lines.push(`  ${chalk.yellow('⏳ Sending...')}`)
+      lines.push(`  ${themeColors.warning('⏳ Sending...')}`)
       lines.push('')
     } else if (state.bugReportStatus === 'success') {
-      lines.push(`  ${chalk.greenBright.bold('✅ Successfully sent!')} ${chalk.dim('Closing overlay in 3 seconds...')}`)
+      lines.push(`  ${themeColors.successBold('✅ Successfully sent!')} ${themeColors.dim('Closing overlay in 3 seconds...')}`)
       lines.push('')
-      lines.push(`  ${chalk.dim('Thank you for your feedback! It has been sent to the project team.')}`)
+      lines.push(`  ${themeColors.dim('Thank you for your feedback! It has been sent to the project team.')}`)
       lines.push('')
     } else if (state.bugReportStatus === 'error') {
-      lines.push(`  ${chalk.red('❌ Error:')} ${chalk.yellow(state.bugReportError || 'Failed to send')}`)
-      lines.push(`  ${chalk.dim('Press Backspace to edit, or Esc to close')}`)
+      lines.push(`  ${themeColors.error('❌ Error:')} ${themeColors.warning(state.bugReportError || 'Failed to send')}`)
+      lines.push(`  ${themeColors.dim('Press Backspace to edit, or Esc to close')}`)
       lines.push('')
     } else {
-      lines.push(`  ${chalk.dim('Type your feedback below. Press Enter to send, Esc to cancel.')}`)
-      lines.push(`  ${chalk.dim('Your message will be sent anonymously to the project team.')}`)
+      lines.push(`  ${themeColors.dim('Type your feedback below. Press Enter to send, Esc to cancel.')}`)
+      lines.push(`  ${themeColors.dim('Your message will be sent anonymously to the project team.')}`)
       lines.push('')
     }
 
     // 📖 Simple input area – left-aligned, framed by horizontal lines
-    lines.push(`  ${chalk.cyan('Message')} (${state.bugReportBuffer.length}/500 chars)`)
-    lines.push(`  ${chalk.dim('─'.repeat(maxInputWidth))}`)
+    lines.push(`  ${themeColors.info('Message')} (${state.bugReportBuffer.length}/500 chars)`)
+    lines.push(`  ${themeColors.dim('─'.repeat(maxInputWidth))}`)
     // 📖 Input lines — left-aligned, or placeholder when empty
     if (displayLines.length > 0) {
       for (const line of displayLines) {
@@ -817,19 +911,18 @@ export function createOverlayRenderers(state, deps) {
       }
       // 📖 Show cursor on last line
       if (state.bugReportStatus === 'idle' || state.bugReportStatus === 'error') {
-        lines[lines.length - 1] += chalk.cyanBright('▏')
+        lines[lines.length - 1] += themeColors.accentBold('▏')
       }
     } else {
-      const placeholderBR = state.bugReportStatus === 'idle' ? chalk.white.italic('Type your message here...') : ''
-      lines.push(`    ${placeholderBR}${chalk.cyanBright('▏')}`)
+      const placeholderBR = state.bugReportStatus === 'idle' ? chalk.italic.rgb(...getProviderRgb('googleai'))('Type your message here...') : ''
+      lines.push(`    ${placeholderBR}${themeColors.accentBold('▏')}`)
     }
-    lines.push(`  ${chalk.dim('─'.repeat(maxInputWidth))}`)
+    lines.push(`  ${themeColors.dim('─'.repeat(maxInputWidth))}`)
     lines.push('')
-    lines.push(chalk.dim('  Enter Send  •  Esc Cancel  •  Backspace Delete'))
+    lines.push(themeColors.dim('  Enter Send  •  Esc Cancel  •  Backspace Delete'))
 
     // 📖 Apply overlay tint and return
-    const BUG_REPORT_OVERLAY_BG = chalk.bgRgb(0, 0, 0) // Dark red-ish background (RGB: 46, 20, 20)
-    const tintedLines = tintOverlayLines(lines, BUG_REPORT_OVERLAY_BG, state.terminalCols)
+    const tintedLines = tintOverlayLines(lines, themeColors.overlayBgFeedback, state.terminalCols)
     const cleared = tintedLines.map(l => l + EL)
     return cleared.join('\n')
   }
@@ -853,14 +946,14 @@ export function createOverlayRenderers(state, deps) {
     })
 
     // 📖 Branding header
-    lines.push(`  ${chalk.cyanBright('🚀')} ${chalk.bold.cyanBright('free-coding-models')} ${chalk.dim(`v${LOCAL_VERSION}`)}`)
+    lines.push(`  ${themeColors.accent('🚀')} ${themeColors.accentBold('free-coding-models')} ${themeColors.dim(`v${LOCAL_VERSION}`)}`)
 
     if (state.changelogPhase === 'index') {
       // ═══════════════════════════════════════════════════════════════════════
       // 📖 INDEX PHASE: Show all versions with selection
       // ═══════════════════════════════════════════════════════════════════════
-      lines.push(`  ${chalk.bold('📋 Changelog - All Versions')}`)
-      lines.push(`  ${chalk.dim('— ↑↓ navigate • Enter select • Esc close')}`)
+      lines.push(`  ${themeColors.textBold('📋 Changelog - All Versions')}`)
+      lines.push(`  ${themeColors.dim('— ↑↓ navigate • Enter select • Esc close')}`)
       lines.push('')
 
       for (let i = 0; i < versionList.length; i++) {
@@ -896,22 +989,22 @@ export function createOverlayRenderers(state, deps) {
         const prefix = `  v${version.padEnd(8)} — ${countStr}`
         if (isSelected) {
           const full = summary ? `${prefix} · ${summary}` : prefix
-          lines.push(chalk.inverse(full))
+          lines.push(themeColors.bgCursor(full))
         } else {
-          const dimSummary = summary ? chalk.dim(` · ${summary}`) : ''
+          const dimSummary = summary ? themeColors.dim(` · ${summary}`) : ''
           lines.push(`${prefix}${dimSummary}`)
         }
       }
 
       lines.push('')
-      lines.push(`  ${chalk.dim(`Total: ${versionList.length} versions`)}`)
+      lines.push(`  ${themeColors.dim(`Total: ${versionList.length} versions`)}`)
 
     } else if (state.changelogPhase === 'details') {
       // ═══════════════════════════════════════════════════════════════════════
       // 📖 DETAILS PHASE: Show detailed changes for selected version
       // ═══════════════════════════════════════════════════════════════════════
-      lines.push(`  ${chalk.bold(`📋 v${state.changelogSelectedVersion}`)}`)
-      lines.push(`  ${chalk.dim('— ↑↓ / PgUp / PgDn scroll • B back • Esc close')}`)
+      lines.push(`  ${themeColors.textBold(`📋 v${state.changelogSelectedVersion}`)}`)
+      lines.push(`  ${themeColors.dim('— ↑↓ / PgUp / PgDn scroll • B back • Esc close')}`)
       lines.push('')
 
       const changes = versions[state.changelogSelectedVersion]
@@ -919,7 +1012,7 @@ export function createOverlayRenderers(state, deps) {
         const sections = { added: '✨ Added', fixed: '🐛 Fixed', changed: '🔄 Changed', updated: '📝 Updated' }
         for (const [key, label] of Object.entries(sections)) {
           if (changes[key] && changes[key].length > 0) {
-            lines.push(`  ${chalk.yellow(label)}`)
+            lines.push(`  ${themeColors.warning(label)}`)
             for (const item of changes[key]) {
               // 📖 Unwrap markdown bold/code markers for display
               let displayText = item.replace(/\*\*([^*]+)\*\*/g, '$1').replace(/`([^`]+)`/g, '$1')
@@ -948,10 +1041,9 @@ export function createOverlayRenderers(state, deps) {
     }
 
     // 📖 Use scrolling with overlay handler
-    const CHANGELOG_OVERLAY_BG = chalk.bgRgb(10, 40, 80)  // Dark blue background
     const { visible, offset } = sliceOverlayLines(lines, state.changelogScrollOffset, state.terminalRows)
     state.changelogScrollOffset = offset
-    const tintedLines = tintOverlayLines(visible, CHANGELOG_OVERLAY_BG, state.terminalCols)
+    const tintedLines = tintOverlayLines(visible, themeColors.overlayBgChangelog, state.terminalCols)
     const cleared = tintedLines.map(l => l + EL)
     return cleared.join('\n')
   }
@@ -965,6 +1057,7 @@ export function createOverlayRenderers(state, deps) {
   return {
     renderSettings,
     renderInstallEndpoints,
+    renderToolInstallPrompt,
     renderHelp,
     renderRecommend,
     renderFeedback,

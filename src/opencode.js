@@ -32,6 +32,7 @@ import { PROVIDER_COLOR } from './render-table.js'
 import { loadOpenCodeConfig, saveOpenCodeConfig } from './opencode-config.js'
 import { getApiKey } from './config.js'
 import { ENV_VAR_NAMES, OPENCODE_MODEL_MAP, isWindows, isMac, isLinux } from './provider-metadata.js'
+import { resolveToolBinaryPath } from './tool-bootstrap.js'
 
 // 📖 OpenCode config location: ~/.config/opencode/opencode.json on ALL platforms.
 // 📖 OpenCode uses xdg-basedir which resolves to %USERPROFILE%\.config on Windows.
@@ -177,7 +178,7 @@ async function spawnOpenCode(args, providerKey, fcmConfig, existingZaiProxy = nu
   }
 
   const { spawn } = await import('child_process')
-  const child = spawn('opencode', finalArgs, {
+  const child = spawn(resolveToolBinaryPath('opencode') || 'opencode', finalArgs, {
     stdio: 'inherit',
     shell: true,
     detached: false,

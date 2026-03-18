@@ -110,7 +110,7 @@ export function tintOverlayLines(lines, bgColor, terminalCols = null) {
   const panelWidth = terminalCols || OVERLAY_PANEL_WIDTH
   return lines.map((line) => {
     const text = String(line)
-    const visibleWidth = stripAnsi(text).length
+    const visibleWidth = displayWidth(text)
     const padding = ' '.repeat(Math.max(0, panelWidth - visibleWidth))
     return bgColor(text + padding)
   })

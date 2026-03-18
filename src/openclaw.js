@@ -3,10 +3,12 @@
  * @description OpenClaw config helpers for persisting the selected provider/model as the default.
  *
  * @details
- *   📖 OpenClaw is config-driven: FCM does not launch a separate foreground CLI here.
+ *   📖 OpenClaw is primarily config-driven, but FCM can now optionally launch the
+ *   📖 installed CLI right after persisting the selected default model.
  *   📖 Pressing Enter in `OpenClaw` mode must therefore do two things reliably:
  *   - install the selected provider/model into `~/.openclaw/openclaw.json`
  *   - set that exact model as the default primary model for the next OpenClaw session
+ *   - optionally start `openclaw` immediately when the caller asks for it
  *
  *   📖 The old implementation was hard-coded to `nvidia/*`, which meant selecting
  *   📖 a Groq/Cerebras/etc. row silently wrote the wrong provider/model into the
@@ -30,6 +32,7 @@ import { dirname, join } from 'path'
 import { installProviderEndpoints } from './endpoint-installer.js'
 import { ENV_VAR_NAMES } from './provider-metadata.js'
 import { PROVIDER_COLOR } from './render-table.js'
+import { resolveToolBinaryPath } from './tool-bootstrap.js'
 
 const OPENCLAW_CONFIG = join(homedir(), '.openclaw', 'openclaw.json')
 
@@ -53,13 +56,38 @@ export function saveOpenClawConfig(config, options = {}) {
   writeFileSync(filePath, JSON.stringify(config, null, 2))
 }
 
+function spawnOpenClawCli() {
+  return new Promise(async (resolve, reject) => {
+    const { spawn } = await import('child_process')
+    const command = resolveToolBinaryPath('openclaw') || 'openclaw'
+    const child = spawn(command, [], {
+      stdio: 'inherit',
+      shell: false,
+      detached: false,
+      env: process.env,
+    })
+
+    child.on('exit', (code) => resolve(typeof code === 'number' ? code : 0))
+    child.on('error', (error) => {
+      if (error?.code === 'ENOENT') {
+        console.log(chalk.red('  X Could not find "openclaw" in PATH.'))
+        console.log(chalk.dim('  Install: npm install -g openclaw@latest  or see https://docs.openclaw.ai/install'))
+        console.log()
+        resolve(1)
+        return
+      }
+      reject(error)
+    })
+  })
+}
+
 /**
  * 📖 startOpenClaw installs the selected provider/model into OpenClaw and sets
  * 📖 it as the primary default model. OpenClaw itself is not launched here.
  *
  * @param {{ providerKey: string, modelId: string, label: string }} model
  * @param {Record<string, unknown>} config
- * @param {{ paths?: { openclawConfigPath?: string } }} [options]
+ * @param {{ paths?: { openclawConfigPath?: string }, launchCli?: boolean }} [options]
  * @returns {Promise<ReturnType<typeof installProviderEndpoints> | null>}
  */
 export async function startOpenClaw(model, config, options = {}) {
@@ -85,9 +113,15 @@ export async function startOpenClaw(model, config, options = {}) {
     if (result.backupPath) console.log(chalk.dim(`  💾 Backup: ${result.backupPath}`))
     if (providerEnvName) console.log(chalk.dim(`  🔑 API key synced under config env.${providerEnvName}`))
     console.log()
-    console.log(chalk.dim('  💡 OpenClaw will reload config automatically when it notices the file change.'))
-    console.log(chalk.dim(`     To apply manually: openclaw models set ${result.primaryModelRef || `${result.providerId}/${model.modelId}`}`))
-    console.log()
+    if (options.launchCli) {
+      console.log(chalk.dim('  Starting OpenClaw...'))
+      console.log()
+      await spawnOpenClawCli()
+    } else {
+      console.log(chalk.dim('  💡 OpenClaw will reload config automatically when it notices the file change.'))
+      console.log(chalk.dim(`     To apply manually: openclaw models set ${result.primaryModelRef || `${result.providerId}/${model.modelId}`}`))
+      console.log()
+    }
     return result
   } catch (error) {
     console.log(chalk.red(`  X Could not configure OpenClaw: ${error instanceof Error ? error.message : String(error)}`))
