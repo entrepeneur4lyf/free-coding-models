@@ -296,7 +296,6 @@ export async function runApp(cliArgs, config) {
   // 📖 Replaces static openrouter entries in MODELS with fresh data.
   // 📖 Fallback: if fetch fails, the static list from sources.js stays intact + warning shown.
   const lastReleaseDate = await fetchLastReleaseDate()
-  state.lastReleaseDate = lastReleaseDate
   const dynamicModels = await fetchOpenRouterFreeModels()
   if (dynamicModels) {
     // 📖 Remove all existing openrouter entries from MODELS
@@ -483,6 +482,9 @@ export async function runApp(cliArgs, config) {
     // 📖 Custom text filter (Ctrl+P palette → type text → Enter). Ephemeral — not saved to config.
     customTextFilter: null,       // 📖 Active free-text filter string (null = off). Matches model name, ctx, provider key/name.
   }
+
+  // 📖 Apply the pre-fetched last release date now that state is initialized
+  state.lastReleaseDate = lastReleaseDate
 
   // 📖 Re-clamp viewport on terminal resize
   process.stdout.on('resize', () => {
