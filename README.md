@@ -319,6 +319,40 @@ We welcome contributions — issues, PRs, new provider integrations.
 
 ---
 
+## ⚖️ Model Licensing & Commercial Use
+
+**Short answer:** All 174 models allow **commercial use of generated output (including code)**. You own what the models generate for you.
+
+### Output Ownership
+
+For every model in this tool, **you own the generated output** — code, text, or otherwise — and can use it commercially. The licenses below govern the *model weights themselves*, not your generated content.
+
+### License Breakdown by Model Family
+
+| License | Models | Commercial Output |
+|---------|--------|:-----------------:|
+| **Apache 2.0** | Qwen3/Qwen3.5/Qwen2.5 Coder, GPT-OSS 120B/20B, Devstral Small 2, Gemma 4, MiMo V2 Flash | ✅ Unrestricted |
+| **MIT** | GLM 4.5/4.6/4.7/5, MiniMax M2.1, Devstral 2 | ✅ Unrestricted |
+| **Modified MIT** | Kimi K2/K2.5 (>100M MAU → display "Kimi K2" branding) | ✅ With attribution at scale |
+| **Llama Community License** | Llama 3.3 70B, Llama 4 Scout/Maverick | ✅ Attribution required. >700M MAU → separate Meta license |
+| **DeepSeek License** | DeepSeek V3/V3.1/V3.2, R1 | ✅ Use restrictions on model (no military, no harm) — output is yours |
+| **NVIDIA Nemotron License** | Nemotron Super/Ultra/Nano | ✅ Updated Mar 2026, now near-Apache 2.0 permissive |
+| **MiniMax Model License** | MiniMax M2, M2.5 | ✅ Royalty-free, non-exclusive. Prohibited uses policy applies to model |
+| **Proprietary (API)** | Claude (Rovo), Gemini (CLI), Perplexity Sonar, Mistral Large, Codestral | ✅ You own outputs per provider ToS |
+| **OpenCode Zen** | Big Pickle, MiMo V2 Pro/Flash/Omni Free, GPT 5 Nano, MiniMax M2.5 Free, Nemotron 3 Super Free | ✅ Per OpenCode Zen ToS |
+
+### Key Points
+
+1. **Generated code is yours** — no model claims ownership of your output
+2. **Apache 2.0 / MIT models** (Qwen, GLM, GPT-OSS, MiMo, Devstral Small) are the most permissive — no strings attached
+3. **Llama** requires "Built with Llama" attribution; >700M MAU needs a Meta license
+4. **DeepSeek / MiniMax** have use-restriction policies (no military use) that govern the model, not your generated code
+5. **API-served models** (Claude, Gemini, Perplexity) grant full output ownership under their terms of service
+
+> ⚠️ **Disclaimer:** This is a summary, not legal advice. License terms can change. Always verify the current license on the model's official page before making legal decisions.
+
+---
+
 ## 📧 Support
 
 [GitHub Issues](https://github.com/vava-nessa/free-coding-models/issues) · [Discord](https://discord.gg/ZTNFHvvCkU)
