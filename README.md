@@ -2,8 +2,8 @@
   <img src="https://img.shields.io/npm/v/free-coding-models?color=76b900&label=npm&logo=npm" alt="npm version">
   <img src="https://img.shields.io/node/v/free-coding-models?color=76b900&logo=node.js" alt="node version">
   <img src="https://img.shields.io/npm/l/free-coding-models?color=76b900" alt="license">
-  <img src="https://img.shields.io/badge/models-174-76b900?logo=nvidia" alt="models count">
-  <img src="https://img.shields.io/badge/providers-23-blue" alt="providers count">
+  <img src="https://img.shields.io/badge/models-230-76b900?logo=nvidia" alt="models count">
+  <img src="https://img.shields.io/badge/providers-24-blue" alt="providers count">
 </p>
 
 <h1 align="center">free-coding-models</h1>
@@ -14,7 +14,7 @@
 
 <p align="center">
   <strong>Find the fastest free coding model in seconds</strong><br>
-  <sub>Ping 174 models across 23 AI Free providers in real-time </sub><br><sub> Install Free API endpoints to your favorite AI coding tool: <br>📦 OpenCode, 🦞 OpenClaw, 💘 Crush, 🪿 Goose, 🛠 Aider, 🐉 Qwen Code, 🤲 OpenHands, ⚡ Amp, π Pi, 🦘 Rovo or ♊ Gemini in one keystroke</sub>
+  <sub>Ping 230 models across 24 AI Free providers in real-time </sub><br><sub> Install Free API endpoints to your favorite AI coding tool: <br>📦 OpenCode, 🦞 OpenClaw, 💘 Crush, 🪿 Goose, 🛠 Aider, 🐉 Qwen Code, 🤲 OpenHands, ⚡ Amp, π Pi, 🦘 Rovo or ♊ Gemini in one keystroke</sub>
 </p>
 
 
@@ -51,7 +51,7 @@ create a free account on one of the [providers](#-list-of-free-ai-providers)
 
 ## 💡 Why this tool?
 
-There are **174+ free coding models** scattered across 23 providers. Which one is fastest right now? Which one is actually stable versus just lucky on the last ping?
+There are **230+ free coding models** scattered across 24 providers. Which one is fastest right now? Which one is actually stable versus just lucky on the last ping?
 
 This CLI pings them all in parallel, shows live latency, and calculates a **live Stability Score (0-100)**. Average latency alone is misleading if a model randomly spikes to 6 seconds; the stability score measures true reliability by combining **p95 latency** (30%), **jitter/variance** (30%), **spike rate** (20%), and **uptime** (20%). 
 
@@ -65,33 +65,34 @@ It then writes the model you pick directly into your coding tool's config — so
 
 Create a free account on one provider below to get started:
 
-**174 coding models** across 23 providers, ranked by [SWE-bench Verified](https://www.swebench.com).
+**230 coding models** across 24 providers, ranked by [SWE-bench Verified](https://www.swebench.com).
 
 | Provider | Models | Tier range | Free tier | Env var |
 |----------|--------|-----------|-----------|--------|
-| [NVIDIA NIM](https://build.nvidia.com) | 44 | S+ → C | 40 req/min (no credit card needed) | `NVIDIA_API_KEY` |
+| [NVIDIA NIM](https://build.nvidia.com) | 46 | S+ → C | 40 req/min (no credit card needed) | `NVIDIA_API_KEY` |
+| [OpenRouter](https://openrouter.ai/keys) | 25 | S+ → C | Free on :free: 50/day <$10, 1000/day ≥$10 (20 req/min) | `OPENROUTER_API_KEY` |
+| [Cloudflare Workers AI](https://dash.cloudflare.com) | 15 | S → B | Free: 10k neurons/day, text-gen 300 RPM | `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` |
+| [SambaNova](https://sambanova.ai/developers) | 13 | S+ → B | Dev tier generous quota | `SAMBANOVA_API_KEY` |
+| [Hyperbolic](https://app.hyperbolic.ai/settings) | 13 | S+ → A- | $1 free trial credits | `HYPERBOLIC_API_KEY` |
+| [Together AI](https://api.together.ai/settings/api-keys) | 19 | S+ → A- | Credits/promos vary by account (check console) | `TOGETHER_API_KEY` |
+| [Scaleway](https://console.scaleway.com/iam/api-keys) | 10 | S+ → B+ | 1M free tokens | `SCALEWAY_API_KEY` |
 | [iFlow](https://platform.iflow.cn) | 11 | S+ → A+ | Free for individuals (no req limits, 7-day key expiry) | `IFLOW_API_KEY` |
+| [Alibaba DashScope](https://modelstudio.console.alibabacloud.com) | 11 | S+ → A | 1M free tokens per model (Singapore region, 90 days) | `DASHSCOPE_API_KEY` |
+| [Groq](https://console.groq.com/keys) | 8 | S → B | 30‑50 RPM per model (varies by model) | `GROQ_API_KEY` |
+| [Rovo Dev CLI](https://www.atlassian.com/rovo) | 5 | S+ | 5M tokens/day (beta) | CLI tool 🦘 |
 | [ZAI](https://z.ai) | 7 | S+ → S | Free tier (generous quota) | `ZAI_API_KEY` |
-| [Alibaba DashScope](https://modelstudio.console.alibabacloud.com) | 8 | S+ → A | 1M free tokens per model (Singapore region, 90 days) | `DASHSCOPE_API_KEY` |
-| [Groq](https://console.groq.com/keys) | 10 | S → B | 30‑50 RPM per model (varies by model) | `GROQ_API_KEY` |
-| [Cerebras](https://cloud.cerebras.ai) | 7 | S+ → B | Generous free tier (developer tier 10× higher limits) | `CEREBRAS_API_KEY` |
-| [SambaNova](https://sambanova.ai/developers) | 12 | S+ → B | Dev tier generous quota | `SAMBANOVA_API_KEY` |
-| [OpenRouter](https://openrouter.ai/keys) | 11 | S+ → C | Free on :free: 50/day <$10, 1000/day ≥$10 (20 req/min) | `OPENROUTER_API_KEY` |
-| [Hugging Face](https://huggingface.co/settings/tokens) | 2 | S → B | Free monthly credits (~$0.10) | `HUGGINGFACE_API_KEY` |
-| [Together AI](https://api.together.ai/settings/api-keys) | 7 | S+ → A- | Credits/promos vary by account (check console) | `TOGETHER_API_KEY` |
-| [DeepInfra](https://deepinfra.com/login) | 2 | A- → B+ | 200 concurrent requests (default) | `DEEPINFRA_API_KEY` |
-| [Fireworks AI](https://fireworks.ai) | 2 | S | $1 credits – 10 req/min without payment | `FIREWORKS_API_KEY` |
-| [Mistral Codestral](https://codestral.mistral.ai) | 1 | B+ | 30 req/min, 2000/day | `CODESTRAL_API_KEY` |
-| [Hyperbolic](https://app.hyperbolic.ai/settings) | 10 | S+ → A- | $1 free trial credits | `HYPERBOLIC_API_KEY` |
-| [Scaleway](https://console.scaleway.com/iam/api-keys) | 7 | S+ → B+ | 1M free tokens | `SCALEWAY_API_KEY` |
-| [Google AI Studio](https://aistudio.google.com/apikey) | 3 | B → C | 14.4K req/day, 30/min | `GOOGLE_API_KEY` |
+| [OpenCode Zen](https://opencode.ai/zen) | 7 | S+ → A+ | Free with OpenCode account | Zen models ✨ |
+| [Google AI Studio](https://aistudio.google.com/apikey) | 6 | B+ → C | 14.4K req/day, 30/min | `GOOGLE_API_KEY` |
 | [SiliconFlow](https://cloud.siliconflow.cn/account/ak) | 6 | S+ → A | Free models: usually 100 RPM, varies by model | `SILICONFLOW_API_KEY` |
-| [Cloudflare Workers AI](https://dash.cloudflare.com) | 6 | S → B | Free: 10k neurons/day, text-gen 300 RPM | `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` |
+| [Cerebras](https://cloud.cerebras.ai) | 4 | S+ → B | Generous free tier (developer tier 10× higher limits) | `CEREBRAS_API_KEY` |
 | [Perplexity API](https://www.perplexity.ai/settings/api) | 4 | A+ → B | Tiered limits by spend (default ~50 RPM) | `PERPLEXITY_API_KEY` |
-| [Replicate](https://replicate.com/account/api-tokens) | 1 | A- | 6 req/min (no payment) – up to 3,000 RPM with payment | `REPLICATE_API_TOKEN` |
-| [Rovo Dev CLI](https://www.atlassian.com/rovo) | 1 | S+ | 5M tokens/day (beta) | CLI tool 🦘 |
+| [Chutes AI](https://chutes.ai) | 4 | S → A | Free (community GPU-powered, no credit card) | `CHUTES_API_KEY` |
+| [DeepInfra](https://deepinfra.com/login) | 4 | A- → B+ | 200 concurrent requests (default) | `DEEPINFRA_API_KEY` |
+| [Fireworks AI](https://fireworks.ai) | 4 | S → B+ | $1 credits – 10 req/min without payment | `FIREWORKS_API_KEY` |
 | [Gemini CLI](https://github.com/google-gemini/gemini-cli) | 3 | S+ → A+ | 1,000 req/day | CLI tool ♊ |
-| [OpenCode Zen](https://opencode.ai/zen) | 8 | S+ → A+ | Free with OpenCode account | Zen models ✨ |
+| [Hugging Face](https://huggingface.com/settings/tokens) | 2 | S → B | Free monthly credits (~$0.10) | `HUGGINGFACE_API_KEY` |
+| [Replicate](https://replicate.com/account/api-tokens) | 2 | A- → B | 6 req/min (no payment) – up to 3,000 RPM with payment | `REPLICATE_API_TOKEN` |
+| [Mistral Codestral](https://codestral.mistral.ai) | 1 | B+ | 30 req/min, 2000/day | `CODESTRAL_API_KEY` |
 
 > 💡 One key is enough. Add more at any time with **`P`** inside the TUI.
 
@@ -283,7 +284,7 @@ When a tool mode is active (via `Z`), models incompatible with that tool are hig
 
 ## ✨ Features
 
-- **Parallel pings** — all 174 models tested simultaneously via native `fetch`
+- **Parallel pings** — all 230 models tested simultaneously via native `fetch`
 - **Adaptive monitoring** — 2s burst for 60s → 10s normal → 30s idle
 - **Stability score** — composite 0–100 (p95 latency, jitter, spike rate, uptime)
 - **Smart ranking** — top 3 highlighted 🥇🥈🥉
@@ -321,7 +322,7 @@ We welcome contributions — issues, PRs, new provider integrations.
 
 ## ⚖️ Model Licensing & Commercial Use
 
-**Short answer:** All 174 models allow **commercial use of generated output (including code)**. You own what the models generate for you.
+**Short answer:** All 230 models allow **commercial use of generated output (including code)**. You own what the models generate for you.
 
 ### Output Ownership
 

@@ -1,6 +1,33 @@
 # Changelog
 ---
 
+## [0.3.34] - 2026-04-06
+
+### Added
+- **Chutes AI** — new decentralized free provider (4 models: DeepSeek R1, Llama 3.1 70B, Qwen 2.5 72B, Qwen2.5 Coder 32B)
+- **Google Gemini 3.1 Pro** — replaced dead Gemini 3 Pro (shut down March 9)
+- **Google Gemma 4 family** — Gemma 4 31B, Gemma 4 26B MoE, Gemma 4 E4B added to Google AI Studio
+- **Qwen3.6 Plus** and **Qwen3.5 Plus** added to Alibaba DashScope
+- **NVIDIA NIM: Kimi K2 Instruct 0905** added
+- **SambaNova: Qwen3-235B-A22B-Instruct-2507** added
+- **OpenRouter: ~10 new free models** (arcee trinity, mimo-v2-flash, etc.) — 25 total
+- **Together AI: expanded to 19 free models** (DeepSeek V3.2, MiniMax M2.1, etc.)
+- **Cloudflare: 4 new models** (gemma-4-26b, mistral-small-3.1, qwq-32b, granite-4.0) — 15 total
+- **Scaleway: gpt-oss-120b and holo2-30b-a3b** added
+- **Hyperbolic: gpt-oss-20b and Qwen3-235B-Instruct-2507** added
+- **Rovo: GPT-5.2, GPT-5.2-Codex, Claude Haiku 4.5** added
+- **OpenCode Zen: mimo-v2-pro-free, mimo-v2-omni-free** added; fixed context windows (gpt-5-nano: 128k→400k, nemotron-3-super-free: 128k→1M)
+
+### Changed
+- **Groq scout model renamed** — `llama-4-scout-17b-16e-preview` → `llama-4-scout-17b-16e-instruct`
+- **Now 230 models across 24 providers** (was 174/23)
+- **README provider table fully updated** with accurate per-provider counts
+
+### Fixed
+- Removed 3 deprecated Cerebras models (llama3.3-70b, qwen-3-32b, llama-4-scout-17b-16e-instruct) — 4 remain
+- Fixed missing comma in googleai array causing undefined model entry
+- Replaced all `??%` placeholder SWE scores with reasonable estimates
+
 ## [0.3.33] - 2026-04-01
 
 ### Changed

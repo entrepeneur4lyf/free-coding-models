@@ -59,6 +59,7 @@ export const ENV_VAR_NAMES = {
   perplexity: 'PERPLEXITY_API_KEY',
   zai:        'ZAI_API_KEY',
   gemini:     'GEMINI_API_KEY',
+  chutes:     'CHUTES_API_KEY',
 }
 
 // 📖 OPENCODE_MODEL_MAP: sparse table of model IDs that differ between sources.js and OpenCode's
@@ -66,7 +67,6 @@ export const ENV_VAR_NAMES = {
 export const OPENCODE_MODEL_MAP = {
   groq: {
     'moonshotai/kimi-k2-instruct': 'moonshotai/kimi-k2-instruct-0905',
-    'meta-llama/llama-4-scout-17b-16e-preview': 'meta-llama/llama-4-scout-17b-16e-instruct',
     'meta-llama/llama-4-maverick-17b-128e-preview': 'meta-llama/llama-4-maverick-17b-128e-instruct',
   }
 }
@@ -249,5 +249,12 @@ export const PROVIDER_METADATA = {
     signupHint: 'Login at opencode.ai/auth to get your Zen API key',
     rateLimits: 'Free tier models — requires OpenCode Zen API key',
     zenOnly: true,
+  },
+  chutes: {
+    label: 'Chutes AI',
+    color: chalk.rgb(144, 238, 144),
+    signupUrl: 'https://chutes.ai',
+    signupHint: 'Sign up and generate an API key',
+    rateLimits: 'Free (community GPU-powered), no hard cap',
   },
 }
